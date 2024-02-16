@@ -1,25 +1,21 @@
 import { logger, waiter } from '@hirosystems/api-toolkit';
-import { StacksApiSocketClient } from '@stacks/blockchain-api-client';
-import { StacksMocknet } from '@stacks/network';
 import { MempoolTransaction, Transaction } from '@stacks/stacks-blockchain-api-types';
 import { broadcastTransaction, makeSTXTokenTransfer } from '@stacks/transactions';
+import { ENV } from '../env';
+import { newSocketClient, stacksNetwork } from '../helpers';
 
 describe('Stacks transactions', () => {
   test('STX transfer', async () => {
-    const recipientAddress = 'STQM73RQC4EX0A07KWG1J5ECZJYBZS4SJ4ERC6WN';
-    const client = new StacksApiSocketClient({
-      url: `http://localhost:3999`,
-      socketOpts: { reconnection: false },
-    });
+    const client = newSocketClient();
     const txWaiter = waiter<Transaction | MempoolTransaction>();
 
-    const network = new StacksMocknet({ url: 'http://localhost:20443' });
+    const network = stacksNetwork();
     const tx = await makeSTXTokenTransfer({
       network,
-      recipient: recipientAddress,
+      recipient: ENV.RECEIVER_STX_ADDRESS,
       amount: 10_000,
       anchorMode: 'any',
-      senderKey: 'cb3df38053d132895220b9ce471f6b676db5b9bf0b4adefb55f2118ece2478df01',
+      senderKey: ENV.SENDER_KEY,
     });
     const broadcast = await broadcastTransaction(tx, network);
     logger.info(`Transaction broadcast: 0x${broadcast.txid}`);
