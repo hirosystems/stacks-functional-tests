@@ -2,16 +2,18 @@ import { logger, waiter } from '@hirosystems/api-toolkit';
 import { MempoolTransaction, Transaction } from '@stacks/stacks-blockchain-api-types';
 import { broadcastTransaction, makeSTXTokenTransfer } from '@stacks/transactions';
 import { ENV } from '../env';
-import { newSocketClient, stacksNetwork } from '../helpers';
+import { getNextNonce, newSocketClient, stacksNetwork } from '../helpers';
 
 describe('Stacks transactions', () => {
   test('STX transfer', async () => {
     const client = newSocketClient();
-    const txWaiter = waiter<Transaction | MempoolTransaction>();
-
     const network = stacksNetwork();
+    const nonce = await getNextNonce();
+
+    const txWaiter = waiter<Transaction | MempoolTransaction>();
     const tx = await makeSTXTokenTransfer({
       network,
+      nonce,
       recipient: ENV.RECEIVER_STX_ADDRESS,
       amount: 10_000,
       anchorMode: 'any',
