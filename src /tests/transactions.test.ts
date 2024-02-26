@@ -1,4 +1,4 @@
-import { logger, waiter } from '@hirosystems/api-toolkit';
+import { Waiter, logger, waiter } from '@hirosystems/api-toolkit';
 import { MempoolTransaction, Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
   broadcastTransaction,
@@ -17,6 +17,7 @@ describe('Stacks transactions', () => {
   let socketClient: StacksApiSocketClient;
   let network: StacksNetwork;
   let nextNonce: number;
+  let txWaiter: Waiter<Transaction | MempoolTransaction>;
 
   beforeAll(() => {
     network = stacksNetwork();
@@ -25,6 +26,7 @@ describe('Stacks transactions', () => {
   beforeEach(async () => {
     socketClient = newSocketClient();
     nextNonce = await getNextNonce();
+    txWaiter = waiter<Transaction | MempoolTransaction>();
   });
 
   afterEach(async () => {
@@ -33,7 +35,6 @@ describe('Stacks transactions', () => {
   });
 
   test('STX transfer', async () => {
-    const txWaiter = waiter<Transaction | MempoolTransaction>();
     const tx = await makeSTXTokenTransfer({
       network,
       nonce: nextNonce,
@@ -62,7 +63,6 @@ describe('Stacks transactions', () => {
   });
 
   test('Contract deploy', async () => {
-    const txWaiter = waiter<Transaction | MempoolTransaction>();
     const codeBody = fs.readFileSync(path.join(__dirname, '../contracts/counter.clar'), 'utf-8');
     const tx = await makeContractDeploy({
       network,
