@@ -1,6 +1,7 @@
 import { AccountsApi, Configuration, StacksApiSocketClient } from '@stacks/blockchain-api-client';
 import { ENV } from './env';
 import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
+import { timeout } from '@hirosystems/api-toolkit';
 
 export function newSocketClient(): StacksApiSocketClient {
   return new StacksApiSocketClient({
@@ -19,11 +20,27 @@ export function stacksNetwork(): StacksNetwork {
   }
 }
 
-export async function getNextNonce(): Promise<number> {
+export async function getNextNonce(fromStacksNode: boolean = true): Promise<number> {
   const config = new Configuration({
     basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
   });
   const api = new AccountsApi(config);
-  const result = await api.getAccountNonces({ principal: ENV.SENDER_STX_ADDRESS });
-  return result.possible_next_nonce;
+  if (fromStacksNode) {
+    const result = await api.getAccountInfo({ principal: ENV.SENDER_STX_ADDRESS });
+    return result.nonce;
+  } else {
+    const result = await api.getAccountNonces({ principal: ENV.SENDER_STX_ADDRESS });
+    return result.possible_next_nonce;
+  }
+}
+
+export async function waitForNextNonce(
+  currentNonce: number,
+  interval: number = 100
+): Promise<void> {
+  let next: number = currentNonce;
+  do {
+    await timeout(interval);
+    next = await getNextNonce();
+  } while (next != currentNonce + 1);
 }
