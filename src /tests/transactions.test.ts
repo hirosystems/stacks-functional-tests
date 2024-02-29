@@ -1,36 +1,29 @@
-import { Waiter, logger, waiter } from '@hirosystems/api-toolkit';
-import { MempoolTransaction, Transaction } from '@stacks/stacks-blockchain-api-types';
-import {
-  broadcastTransaction,
-  makeContractDeploy,
-  makeSTXTokenTransfer,
-} from '@stacks/transactions';
+import { makeContractDeploy, makeSTXTokenTransfer } from '@stacks/transactions';
 import { ENV } from '../env';
-import { getNextNonce, newSocketClient, stacksNetwork, waitForNextNonce } from '../helpers';
-import { StacksApiSocketClient } from '@stacks/blockchain-api-client';
+import {
+  broadcastAndWaitForTransaction,
+  getNextNonce,
+  stacksNetwork,
+  waitForNextNonce,
+} from '../helpers';
 import { StacksNetwork } from '@stacks/network';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
 describe('Stacks transactions', () => {
-  let socketClient: StacksApiSocketClient;
   let network: StacksNetwork;
   let nextNonce: number;
-  let txWaiter: Waiter<Transaction | MempoolTransaction>;
 
   beforeAll(() => {
     network = stacksNetwork();
   });
 
   beforeEach(async () => {
-    socketClient = newSocketClient();
     nextNonce = await getNextNonce();
-    txWaiter = waiter<Transaction | MempoolTransaction>();
   });
 
   afterEach(async () => {
-    socketClient.socket.close();
     await waitForNextNonce(nextNonce);
   });
 
@@ -43,23 +36,8 @@ describe('Stacks transactions', () => {
       anchorMode: 'any',
       senderKey: ENV.SENDER_KEY,
     });
-    const broadcast = await broadcastTransaction(tx, network);
-    logger.info(`Transaction broadcast: 0x${broadcast.txid}`);
-    const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
-      if (tx.tx_status == 'pending') {
-        logger.info(`Transaction received in the mempool`);
-        return;
-      }
-      txWaiter.finish(tx);
-    });
-
-    const result = await txWaiter;
-    try {
-      expect(result.tx_id).toBe(`0x${broadcast.txid}`);
-      expect(result.tx_status).toBe('success');
-    } finally {
-      subscription.unsubscribe();
-    }
+    const result = await broadcastAndWaitForTransaction(tx, network);
+    expect(result.tx_status).toBe('success');
   });
 
   test('Contract deploy', async () => {
@@ -72,23 +50,7 @@ describe('Stacks transactions', () => {
       anchorMode: 'any',
       senderKey: ENV.SENDER_KEY,
     });
-
-    const broadcast = await broadcastTransaction(tx, network);
-    logger.info(`Transaction broadcast: 0x${broadcast.txid}`);
-    const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
-      if (tx.tx_status == 'pending') {
-        logger.info(`Transaction received in the mempool`);
-        return;
-      }
-      txWaiter.finish(tx);
-    });
-
-    const result = await txWaiter;
-    try {
-      expect(result.tx_id).toBe(`0x${broadcast.txid}`);
-      expect(result.tx_status).toBe('success');
-    } finally {
-      subscription.unsubscribe();
-    }
+    const result = await broadcastAndWaitForTransaction(tx, network);
+    expect(result.tx_status).toBe('success');
   });
 });

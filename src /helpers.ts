@@ -1,7 +1,9 @@
 import { AccountsApi, Configuration, StacksApiSocketClient } from '@stacks/blockchain-api-client';
 import { ENV } from './env';
 import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
-import { timeout } from '@hirosystems/api-toolkit';
+import { logger, timeout, waiter } from '@hirosystems/api-toolkit';
+import { Transaction } from '@stacks/stacks-blockchain-api-types';
+import { StacksTransaction, broadcastTransaction } from '@stacks/transactions';
 
 export function newSocketClient(): StacksApiSocketClient {
   return new StacksApiSocketClient({
@@ -43,4 +45,28 @@ export async function waitForNextNonce(
     await timeout(interval);
     next = await getNextNonce();
   } while (next != currentNonce + 1);
+}
+
+export async function broadcastAndWaitForTransaction(
+  tx: StacksTransaction,
+  network: StacksNetwork
+): Promise<Transaction> {
+  const socketClient = newSocketClient();
+  const txWaiter = waiter<Transaction>();
+
+  const broadcast = await broadcastTransaction(tx, network);
+  logger.debug(`Broadcast: 0x${broadcast.txid}`);
+  const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
+    if ('block_hash' in tx) {
+      logger.debug(`Confirmed: 0x${broadcast.txid}`);
+      txWaiter.finish(tx);
+    } else if (tx.tx_status == 'pending') {
+      logger.debug(`Mempool: 0x${broadcast.txid}`);
+    }
+  });
+  const result = await txWaiter;
+
+  subscription.unsubscribe();
+  socketClient.socket.close();
+  return result;
 }
