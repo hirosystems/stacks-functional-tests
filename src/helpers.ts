@@ -36,6 +36,11 @@ export async function getNextNonce(fromStacksNode: boolean = true): Promise<numb
   }
 }
 
+/**
+ * Waits until the Stacks node reports the next nonce for the sender STX address.
+ * @param currentNonce - Current nonce
+ * @param interval - How often to poll the node
+ */
 export async function waitForNextNonce(
   currentNonce: number,
   interval: number = 100

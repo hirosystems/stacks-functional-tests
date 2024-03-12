@@ -53,4 +53,21 @@ describe('Stacks transactions', () => {
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
   });
+
+  test('FT contract deploy', async () => {
+    const codeBody = fs.readFileSync(
+      path.join(__dirname, '../contracts/fungible-token.clar'),
+      'utf-8'
+    );
+    const tx = await makeContractDeploy({
+      network,
+      nonce: nextNonce,
+      contractName: `test-ft-${crypto.randomBytes(3).toString('hex')}`,
+      codeBody,
+      anchorMode: 'any',
+      senderKey: ENV.SENDER_KEY,
+    });
+    const result = await broadcastAndWaitForTransaction(tx, network);
+    expect(result.tx_status).toBe('success');
+  });
 });
