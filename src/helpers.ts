@@ -2,6 +2,7 @@ import {
   AccountsApi,
   Configuration,
   InfoApi,
+  StackingRewardsApi,
   StacksApiSocketClient,
   TransactionsApi,
 } from '@stacks/blockchain-api-client';
@@ -52,6 +53,21 @@ export function rewardCycleToBurnHeight(cycle: number, poxInfo: PoxInfo): number
   return poxInfo.first_burnchain_block_height + cycle * poxInfo.reward_cycle_length;
 }
 
+// There's two ways of determining if a block is in the prepare phase:
+// - the "normal" prepare phase; based on phase lengths the last X blocks of the
+//   cycle (preparing the next)
+// - the "blockchain" way; instead shifts this to the right by one; X-1 blocks
+//   of the cycle and the 0 index block of the next cycle are sort of part of
+//   the prepare phase
+
+export function isInNeglectedPhase(blockHeight: number, poxInfo: PoxInfo): boolean {
+  // BASED ON stacks-core prepare-phase
+  if (blockHeight <= poxInfo.first_burnchain_block_height) return false;
+  const effectiveHeight = blockHeight - poxInfo.first_burnchain_block_height;
+  const pos = effectiveHeight % poxInfo.reward_cycle_length;
+  return pos === 0 || pos > poxInfo.reward_cycle_length - poxInfo.prepare_phase_block_length;
+}
+
 export function isInPreparePhase(blockHeight: number, poxInfo: PoxInfo): boolean {
   // BASED ON stacks-core
   // if (blockHeight <= poxInfo.first_burnchain_block_height) return false;
@@ -79,6 +95,14 @@ export async function getNextNonce(fromStacksNode: boolean = true): Promise<numb
     const result = await api.getAccountNonces({ principal: ENV.SENDER_STX_ADDRESS });
     return result.possible_next_nonce;
   }
+}
+
+export async function getRewards(btcAddress: string) {
+  const config = new Configuration({
+    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+  });
+  const api = new StackingRewardsApi(config);
+  return (await api.getBurnchainRewardListByAddress({ address: btcAddress })).results;
 }
 
 export const getBurnBlockHeight = withRetry(3, async () => {
@@ -152,6 +176,18 @@ export function getAccount(key: string) {
 }
 
 export async function waitForPreparePhase(poxInfo: PoxInfo) {
+  if (isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
+
+  const effectiveHeight =
+    (poxInfo.current_burnchain_block_height as number) - poxInfo.first_burnchain_block_height;
+  const pos = effectiveHeight % poxInfo.reward_cycle_length;
+  const blocksUntilPreparePhase = poxInfo.reward_phase_block_length - pos;
+  return waitForBurnBlockHeight(
+    (poxInfo.current_burnchain_block_height as number) + blocksUntilPreparePhase
+  );
+}
+
+export async function waitForNeglectedPhase(poxInfo: PoxInfo) {
   if (isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
 
   const effectiveHeight =
