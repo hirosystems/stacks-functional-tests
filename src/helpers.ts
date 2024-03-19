@@ -40,7 +40,7 @@ export function stacksNetwork(): StacksNetwork {
 }
 
 export function burnHeightToRewardCycle(burnHeight: number, poxInfo: PoxInfo): number {
-  // pox-4.clar
+  // BASED ON pox-4.clar
   // (/ (- height (var-get first-burnchain-block-height)) (var-get pox-reward-cycle-length)))
   return Math.floor(
     (burnHeight - poxInfo.first_burnchain_block_height) / poxInfo.reward_cycle_length
@@ -48,39 +48,32 @@ export function burnHeightToRewardCycle(burnHeight: number, poxInfo: PoxInfo): n
 }
 
 export function rewardCycleToBurnHeight(cycle: number, poxInfo: PoxInfo): number {
-  // pox-4.clar
+  // BASED ON pox-4.clar
   // (+ (var-get first-burnchain-block-height) (* cycle (var-get pox-reward-cycle-length))))
   return poxInfo.first_burnchain_block_height + cycle * poxInfo.reward_cycle_length;
 }
 
 // There's two ways of determining if a block is in the prepare phase:
-// - the "normal" prepare phase; based on phase lengths the last X blocks of the
+// - the "normal" prepare phase; based on phase lengths the last X(-1) blocks of the
 //   cycle (preparing the next)
 // - the "blockchain" way; instead shifts this to the right by one; X-1 blocks
 //   of the cycle and the 0 index block of the next cycle are sort of part of
 //   the prepare phase
 
-export function isInNeglectedPhase(blockHeight: number, poxInfo: PoxInfo): boolean {
-  // BASED ON stacks-core prepare-phase
+export function isInPreparePhase(blockHeight: number, poxInfo: PoxInfo): boolean {
+  // BASED ON regtest-env
+  // const effectiveHeight = blockHeight - poxInfo.first_burnchain_block_height;
+  // return (
+  //   poxInfo.reward_cycle_length - (effectiveHeight % poxInfo.reward_cycle_length) <
+  //   poxInfo.prepare_phase_block_length
+  // );
+
+  // BASED ON stacks-core
   if (blockHeight <= poxInfo.first_burnchain_block_height) return false;
   const effectiveHeight = blockHeight - poxInfo.first_burnchain_block_height;
   const pos = effectiveHeight % poxInfo.reward_cycle_length;
-  return pos === 0 || pos > poxInfo.reward_cycle_length - poxInfo.prepare_phase_block_length;
-}
-
-export function isInPreparePhase(blockHeight: number, poxInfo: PoxInfo): boolean {
-  // BASED ON stacks-core
-  // if (blockHeight <= poxInfo.first_burnchain_block_height) return false;
-  // const effectiveHeight = blockHeight - poxInfo.first_burnchain_block_height;
-  // const pos = effectiveHeight % poxInfo.reward_cycle_length;
+  return pos > poxInfo.reward_cycle_length - poxInfo.prepare_phase_block_length; //  equivalent to the regtest-env way
   // return pos === 0 || pos > poxInfo.reward_cycle_length - poxInfo.prepare_phase_block_length;
-
-  // BASED ON regtest-env
-  const effectiveHeight = blockHeight - poxInfo.first_burnchain_block_height;
-  return (
-    poxInfo.reward_cycle_length - (effectiveHeight % poxInfo.reward_cycle_length) <= // WARNING using `<=` rather than `<`
-    poxInfo.prepare_phase_block_length
-  );
 }
 
 export async function getNextNonce(fromStacksNode: boolean = true): Promise<number> {
@@ -105,6 +98,14 @@ export async function getRewards(btcAddress: string) {
   return (await api.getBurnchainRewardListByAddress({ address: btcAddress })).results;
 }
 
+export async function getRewardSlots(btcAddress: string) {
+  const config = new Configuration({
+    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+  });
+  const api = new StackingRewardsApi(config);
+  return (await api.getBurnchainRewardSlotHoldersByAddress({ address: btcAddress })).results;
+}
+
 export const getBurnBlockHeight = withRetry(3, async () => {
   const config = new Configuration({
     basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
@@ -121,6 +122,18 @@ export async function getTransaction(txid: string) {
   const api = new TransactionsApi(config);
   try {
     return (await api.getTransactionById({ txId: txid })) as Transaction;
+  } catch (error) {
+    return null;
+  }
+}
+
+export async function getTransactions(address: string) {
+  const config = new Configuration({
+    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+  });
+  const api = new AccountsApi(config);
+  try {
+    return await api.getAccountTransactions({ principal: address });
   } catch (error) {
     return null;
   }
@@ -175,27 +188,16 @@ export function getAccount(key: string) {
   };
 }
 
-export async function waitForPreparePhase(poxInfo: PoxInfo) {
+/** Wait until we're in the neglected part of the prepare phase */
+export async function waitForPreparePhase(poxInfo: PoxInfo, diff: number = 0) {
   if (isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
 
   const effectiveHeight =
     (poxInfo.current_burnchain_block_height as number) - poxInfo.first_burnchain_block_height;
   const pos = effectiveHeight % poxInfo.reward_cycle_length;
-  const blocksUntilPreparePhase = poxInfo.reward_phase_block_length - pos;
+  const blocksUntilPreparePhase = poxInfo.reward_phase_block_length - pos + 1;
   return waitForBurnBlockHeight(
-    (poxInfo.current_burnchain_block_height as number) + blocksUntilPreparePhase
-  );
-}
-
-export async function waitForNeglectedPhase(poxInfo: PoxInfo) {
-  if (isInNeglectedPhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
-
-  const effectiveHeight =
-    (poxInfo.current_burnchain_block_height as number) - poxInfo.first_burnchain_block_height;
-  const pos = effectiveHeight % poxInfo.reward_cycle_length;
-  const blocksUntilPreparePhase = poxInfo.reward_phase_block_length - pos;
-  return waitForBurnBlockHeight(
-    (poxInfo.current_burnchain_block_height as number) + blocksUntilPreparePhase
+    (poxInfo.current_burnchain_block_height as number) + blocksUntilPreparePhase + diff
   );
 }
 
