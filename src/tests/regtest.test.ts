@@ -7,7 +7,6 @@ import {
   getAccount,
   getPox4Events,
   getRewards,
-  isInNeglectedPhase,
   isInPreparePhase,
   waitForBurnBlockHeight,
   waitForPreparePhase,
@@ -40,7 +39,7 @@ test('regtest-env pox-4 stack-stx (in reward-phase)', async () => {
   await waitForRewardPhase(poxInfo);
 
   poxInfo = await client.getPoxInfo();
-  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(false);
+  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
 
   // TRANSACTION (stack-stx)
   const stackHeight = poxInfo.current_burnchain_block_height as number;
@@ -100,7 +99,7 @@ test('regtest-env pox-4 stack-stx (in reward-phase)', async () => {
 
   await waitForBurnBlockHeight(info.details.unlock_height + 1);
   info = await client.getStatus();
-  expect(info.stacked).toBe(false);
+  expect(info.stacked).toBeFalsy();
 
   // ENSURE REWARDS
   const reward = (await getRewards(steph.btcAddress))[0];
@@ -111,7 +110,7 @@ test('regtest-env pox-4 stack-stx (in reward-phase)', async () => {
   await storeEventsCsv();
 });
 
-test('regtest-env pox-4 stack-stx (on prepare-phase start)', async () => {
+test('regtest-env pox-4 stack-stx (before prepare-phase)', async () => {
   // TEST CASE
   // steph is a solo stacker and stacks on a prepare-phase start (not deep in
   // the prepare phase)
@@ -128,10 +127,15 @@ test('regtest-env pox-4 stack-stx (on prepare-phase start)', async () => {
   await waitForBurnBlockHeight(pox4Activation);
 
   poxInfo = await client.getPoxInfo();
-  await waitForPreparePhase(poxInfo); // todo: fix this to ensure to be EXACTLY at start of a prepare phase
+  await waitForRewardPhase(poxInfo); // ensure we are not already somewhere in the prepare phase
+  poxInfo = await client.getPoxInfo();
+  await waitForPreparePhase(poxInfo, -1); // one before real prepare phase
 
   poxInfo = await client.getPoxInfo();
-  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(true);
+  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+  expect(
+    isInPreparePhase((poxInfo.current_burnchain_block_height as number) + 1, poxInfo)
+  ).toBeTruthy();
 
   // TRANSACTION (stack-stx)
   const stackHeight = poxInfo.current_burnchain_block_height as number;
@@ -170,7 +174,7 @@ test('regtest-env pox-4 stack-stx (on prepare-phase start)', async () => {
   const { results } = await getPox4Events();
   const datas = results.map(r => r.data).filter(d => d.signer_key.includes(signer.signerPublicKey));
 
-  // todo: this is incorrect on the stacks-node side currently
+  // todo: this is incorrect on the stacks-node side currently, it shouldn't have the prepare offset included yet
   expect(datas).toContainEqual(
     expect.objectContaining({
       start_cycle_id: (nextCycle + 1).toString(), // next cycle + prepare offset
@@ -192,12 +196,9 @@ test('regtest-env pox-4 stack-stx (on prepare-phase start)', async () => {
 
   await waitForBurnBlockHeight(info.details.unlock_height + 1);
   info = await client.getStatus();
-  expect(info.stacked).toBe(false);
+  expect(info.stacked).toBeFalsy();
 
   // ENSURE REWARDS
-  // This might be unexpected, since we're "in prepare-phase" but to the
-  // blockchain the height isn't neglected yet and the stacking operation will
-  // get into the next cycle.
   const reward = (await getRewards(steph.btcAddress))[0];
   expect(reward).not.toBeNull();
   expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
@@ -206,7 +207,7 @@ test('regtest-env pox-4 stack-stx (on prepare-phase start)', async () => {
   await storeEventsCsv();
 });
 
-test('regtest-env pox-4 stack-stx (in neglected prepare-phase)', async () => {
+test('regtest-env pox-4 stack-stx (in prepare-phase)', async () => {
   // TEST CASE
   // steph is a solo stacker and attempts to stack 1 block after the
   // prepare-phase has started, which is considered a neglected prepare-phase
@@ -227,13 +228,10 @@ test('regtest-env pox-4 stack-stx (in neglected prepare-phase)', async () => {
   await waitForPreparePhase(poxInfo);
 
   poxInfo = await client.getPoxInfo();
-  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(true);
-  expect(isInNeglectedPhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(false);
-
-  // wait one more block to be in the neglected part of the prepare-phase
-  await waitForBurnBlockHeight((poxInfo.current_burnchain_block_height as number) + 1);
-  poxInfo = await client.getPoxInfo();
-  expect(isInNeglectedPhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(true);
+  expect(
+    isInPreparePhase((poxInfo.current_burnchain_block_height as number) - 1, poxInfo)
+  ).toBeFalsy();
+  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeTruthy();
 
   // TRANSACTION (stack-stx)
   const stackHeight = poxInfo.current_burnchain_block_height as number;
@@ -293,11 +291,11 @@ test('regtest-env pox-4 stack-stx (in neglected prepare-phase)', async () => {
 
   await waitForBurnBlockHeight(info.details.unlock_height + 1);
   info = await client.getStatus();
-  expect(info.stacked).toBe(false);
+  expect(info.stacked).toBeFalsy();
 
   // ENSURE NO REWARDS
   const rewards = await getRewards(steph.btcAddress);
-  expect(rewards.every(r => r.burn_block_height < stackHeight)).toBe(true); // no new rewards
+  expect(rewards.every(r => r.burn_block_height < stackHeight)).toBeTruthy(); // no new rewards
 
   // EXPORT EVENTS
   await storeEventsCsv();
@@ -323,7 +321,7 @@ test('regtest-env pox-4 stack-stx (reward-phase) and stack-extend (reward-phase)
   await waitForRewardPhase(poxInfo);
 
   poxInfo = await client.getPoxInfo();
-  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBe(false);
+  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
 
   // TRANSACTION (stack-stx)
   const stackHeight = poxInfo.current_burnchain_block_height as number;
@@ -381,6 +379,7 @@ test('regtest-env pox-4 stack-stx (reward-phase) and stack-extend (reward-phase)
 
   poxInfo = await client.getPoxInfo();
   expect(poxInfo.reward_cycle_id).toBe(nextCycle);
+  expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
 
   // TRANSACTION (stack-extend)
   const extendHeight = poxInfo.current_burnchain_block_height as number;
@@ -435,7 +434,7 @@ test('regtest-env pox-4 stack-stx (reward-phase) and stack-extend (reward-phase)
 
   await waitForBurnBlockHeight(status.details.unlock_height + 1);
   status = await client.getStatus();
-  expect(status.stacked).toBe(false);
+  expect(status.stacked).toBeFalsy();
 
   // ENSURE CORRECT REWARDS
   const rewards = await getRewards(steph.btcAddress);
