@@ -188,7 +188,7 @@ export async function waitForPreparePhase(poxInfo: PoxInfo) {
 }
 
 export async function waitForNeglectedPhase(poxInfo: PoxInfo) {
-  if (isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
+  if (isInNeglectedPhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
 
   const effectiveHeight =
     (poxInfo.current_burnchain_block_height as number) - poxInfo.first_burnchain_block_height;
