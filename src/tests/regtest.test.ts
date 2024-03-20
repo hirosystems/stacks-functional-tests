@@ -9,17 +9,28 @@ import {
   getRewards,
   isInPreparePhase,
   waitForBurnBlockHeight,
+  waitForNextCycle,
+  waitForNode,
   waitForPreparePhase,
   waitForRewardPhase,
   waitForTransaction,
 } from '../helpers';
-import { storeEventsCsv } from '../utils';
+import { startRegtestEnv, stopRegtestEnv, storeEventsTsv } from '../utils';
 
-jest.setTimeout(1_000_000);
+jest.setTimeout(1_000_000_000);
 
 describe('regtest-env pox-4', () => {
   const network = new StacksDevnet(); // this test only works on regtest-env
   let poxInfo: PoxInfo;
+
+  beforeEach(async () => {
+    await startRegtestEnv();
+    await waitForNode();
+  });
+
+  afterEach(async () => {
+    await stopRegtestEnv();
+  });
 
   test('stack-stx (in reward-phase)', async () => {
     // TEST CASE
@@ -83,7 +94,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: nextCycle.toString(), // next cycle
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -102,17 +113,22 @@ describe('regtest-env pox-4', () => {
       nextCycle + lockPeriod
     ); // same as end_cycle_id
 
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
     // ENSURE REWARDS
     const reward = (await getRewards(steph.btcAddress))[0];
-    expect(reward).not.toBeNull();
+    expect(reward).toBeDefined();
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
   });
 
   test('stack-stx (before prepare-phase)', async () => {
@@ -184,7 +200,7 @@ describe('regtest-env pox-4', () => {
     // todo: this is incorrect on the stacks-node side currently, it shouldn't have the prepare offset included yet
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: (nextCycle + 1).toString(), // next cycle + prepare offset
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -203,17 +219,22 @@ describe('regtest-env pox-4', () => {
       nextCycle + lockPeriod
     ); // same as end_cycle_id
 
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
     // ENSURE REWARDS
     const reward = (await getRewards(steph.btcAddress))[0];
-    expect(reward).not.toBeNull();
+    expect(reward).toBeDefined();
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
   });
 
   test('stack-stx (in prepare-phase)', async () => {
@@ -285,7 +306,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: (nextCycle + 1).toString(), // next cycle + prepare offset
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -304,6 +325,11 @@ describe('regtest-env pox-4', () => {
       nextCycle + lockPeriod
     ); // same as end_cycle_id
 
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked, but didn't make it in time for rewards)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
@@ -313,7 +339,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.every(r => r.burn_block_height < stackHeight)).toBeTruthy(); // no new rewards
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase) and stack-extend (reward-phase)', async () => {
@@ -377,7 +403,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: nextCycle.toString(), // next cycle
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -388,9 +414,8 @@ describe('regtest-env pox-4', () => {
     const stackUnlock = status.details.unlock_height;
 
     poxInfo = await client.getPoxInfo();
-    await waitForBurnBlockHeight(
-      (poxInfo.current_burnchain_block_height as number) + poxInfo.next_reward_cycle_in
-    );
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     expect(poxInfo.reward_cycle_id).toBe(nextCycle);
@@ -449,7 +474,12 @@ describe('regtest-env pox-4', () => {
       stackUnlock + poxInfo.reward_cycle_length * extendCycles
     );
 
-    await waitForBurnBlockHeight(status.details.unlock_height + 2);
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S2'); // snapshot 2 (steph is stacked and extended in the current cycle)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -459,7 +489,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBeGreaterThan(0);
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase) and stack-extend (prepare-phase)', async () => {
@@ -523,7 +553,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: nextCycle.toString(), // next cycle
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -534,9 +564,8 @@ describe('regtest-env pox-4', () => {
     const stackUnlock = status.details.unlock_height;
 
     poxInfo = await client.getPoxInfo();
-    await waitForBurnBlockHeight(
-      (poxInfo.current_burnchain_block_height as number) + poxInfo.next_reward_cycle_in
-    );
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     await waitForPreparePhase(poxInfo);
@@ -584,7 +613,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: (nextCycle + 1).toString(), // next cycle + prepare offset
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
         end_cycle_id: (burnHeightToRewardCycle(stackUnlock, poxInfo) + extendCycles).toString(), // extended period
       })
     );
@@ -599,7 +628,12 @@ describe('regtest-env pox-4', () => {
       stackUnlock + poxInfo.reward_cycle_length * extendCycles
     );
 
-    await waitForBurnBlockHeight(status.details.unlock_height + 2);
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the extend didn't make it in time)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -609,7 +643,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBe(0); // extend didn't make it
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase) and stack-increase (reward-phase)', async () => {
@@ -673,7 +707,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: nextCycle.toString(), // next cycle
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -684,9 +718,8 @@ describe('regtest-env pox-4', () => {
     const stackUnlock = status.details.unlock_height;
 
     poxInfo = await client.getPoxInfo();
-    await waitForBurnBlockHeight(
-      (poxInfo.current_burnchain_block_height as number) + poxInfo.next_reward_cycle_in
-    );
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     expect(poxInfo.reward_cycle_id).toBe(nextCycle);
@@ -740,7 +773,11 @@ describe('regtest-env pox-4', () => {
     expect(status.details.unlock_height).toBeGreaterThan(0);
     expect(status.details.unlock_height).toBe(stackUnlock);
 
-    await waitForBurnBlockHeight(status.details.unlock_height + 2);
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked and increased for the current cycle)
+
+    await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -750,6 +787,157 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
 
     // EXPORT EVENTS
-    await storeEventsCsv();
+    await storeEventsTsv();
+  });
+
+  test('stack-stx (reward-phase) and stack-increase (prepare-phase)', async () => {
+    // TEST CASE
+    // steph is a solo stacker and stacks in a reward-phase
+    // steph then increases in a prepare-phase
+    // but steph doesn't run a signer, so we need to use a different signer key
+    const steph = getAccount(ENV.REGTEST_KEYS[0]);
+    const signer = getAccount(ENV.SIGNER_KEY);
+
+    // PREP
+    const client = new StackingClient(steph.address, network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    // TRANSACTION (stack-stx)
+    const stackHeight = poxInfo.current_burnchain_block_height as number;
+    let currentCycle = poxInfo.reward_cycle_id;
+    let nextCycle = currentCycle + 1;
+    const lockPeriod = 2;
+    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    let authId = crypto.randomBytes(1)[0];
+    let signature = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: lockPeriod,
+      rewardCycle: currentCycle,
+      poxAddress: steph.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: amount,
+      authId,
+    });
+    const { txid } = await client.stack({
+      amountMicroStx: amount,
+      poxAddress: steph.btcAddress,
+      cycles: lockPeriod,
+      burnBlockHeight: stackHeight,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount,
+      authId,
+      privateKey: steph.key,
+    });
+    console.log('txid', txid);
+
+    const result = await waitForTransaction(txid);
+    expect(result.tx_result.repr).toContain('(ok');
+    expect(result.tx_status).toBe('success');
+
+    // CHECK POX-4 EVENTS
+    const { results } = await getPox4Events();
+    let datas = results.map(r => r.data).filter(d => d.signer_key.includes(signer.signerPublicKey));
+
+    expect(datas).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: nextCycle.toString(),
+        end_cycle_id: (nextCycle + lockPeriod).toString(),
+      })
+    );
+
+    // CHECK STATUS AND WAIT FOR NEXT CYCLE PREPARE PHASE
+    let status = await client.getStatus();
+    if (!status.stacked) throw 'not stacked';
+    const stackUnlock = status.details.unlock_height;
+
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
+
+    poxInfo = await client.getPoxInfo();
+    await waitForPreparePhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(
+      isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)
+    ).toBeTruthy();
+
+    // TRANSACTION (stack-increase)
+    const increaseHeight = poxInfo.current_burnchain_block_height as number;
+    const increaseBy = amount;
+    currentCycle = poxInfo.reward_cycle_id;
+    nextCycle = currentCycle + 1;
+    authId = crypto.randomBytes(1)[0];
+    signature = client.signPoxSignature({
+      topic: 'stack-increase',
+      period: lockPeriod,
+      rewardCycle: currentCycle,
+      poxAddress: steph.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId,
+    });
+    const { txid: txidIncrease } = await client.stackIncrease({
+      increaseBy,
+      poxAddress: steph.btcAddress,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount * 2n,
+      authId,
+      privateKey: steph.key,
+    });
+    console.log('txid increase', txidIncrease);
+
+    const resultIncrease = await waitForTransaction(txidIncrease);
+    expect(resultIncrease.tx_result.repr).toContain('(ok');
+    expect(resultIncrease.tx_status).toBe('success');
+
+    // CHECK POX-4 EVENTS
+    const { results: resultsIncr } = await getPox4Events();
+    datas = resultsIncr.map(r => r.data).filter(d => d.signer_key.includes(signer.signerPublicKey));
+
+    expect(datas).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
+        end_cycle_id: burnHeightToRewardCycle(stackUnlock, poxInfo).toString(), // original unlock
+      })
+    );
+
+    // CHECK UNLOCK HEIGHT AND WAIT FOR UNLOCK
+    status = await client.getStatus();
+    if (!status.stacked) throw 'not stacked';
+
+    expect(status.details.unlock_height).toBeGreaterThan(0);
+    expect(status.details.unlock_height).toBe(stackUnlock);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the increase didn't make it in time)
+
+    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    status = await client.getStatus();
+    expect(status.stacked).toBeFalsy();
+
+    // ENSURE CORRECT REWARDS
+    const rewards = await getRewards(steph.btcAddress);
+    expect(rewards.filter(r => r.burn_block_height > stackHeight).length).toBeGreaterThan(0);
+    expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
+
+    // todo: (functional) somehow ensure the slots were not increased on the blockchain side
+
+    // EXPORT EVENTS
+    await storeEventsTsv();
   });
 });

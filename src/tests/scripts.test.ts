@@ -27,3 +27,7 @@ test('get transactions', async () => {
   const txs = await getTransactions(steph.address);
   console.log(txs);
 });
+
+test('get env info', () => {
+  console.log(typeof ENV.REGTEST_IGNORE_UNLOCK);
+});
