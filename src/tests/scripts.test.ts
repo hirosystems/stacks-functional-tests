@@ -29,5 +29,5 @@ test('get transactions', async () => {
 });
 
 test('get env info', () => {
-  console.log(typeof ENV.REGTEST_IGNORE_UNLOCK);
+  console.log(typeof ENV.REGTEST_SKIP_UNLOCK);
 });

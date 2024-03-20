@@ -41,7 +41,7 @@ const schema = Type.Object({
   REGTEST_DOWN_CMD: Type.String(),
 
   /** If true, ignores waiting for unlock and verifying rewards in regtest tests */
-  REGTEST_IGNORE_UNLOCK: Type.Boolean({ default: false }),
+  REGTEST_SKIP_UNLOCK: Type.Boolean({ default: false }),
 });
 type Env = Static<typeof schema>;
 
