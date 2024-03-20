@@ -2,11 +2,13 @@ lib-cov
 *.seed
 *.log
 *.csv
+*.tsv
 *.dat
 *.out
 *.pid
 *.gz
 *.swp
+*.bak
 
 pids
 logs

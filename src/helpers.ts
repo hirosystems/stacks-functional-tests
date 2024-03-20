@@ -1,3 +1,5 @@
+import { logger, timeout, waiter } from '@hirosystems/api-toolkit';
+import { NETWORK, TEST_NETWORK, getAddress } from '@scure/btc-signer';
 import {
   AccountsApi,
   Configuration,
@@ -6,9 +8,9 @@ import {
   StacksApiSocketClient,
   TransactionsApi,
 } from '@stacks/blockchain-api-client';
-import { ENV } from './env';
+import { TransactionVersion, bytesToHex, hexToBytes } from '@stacks/common';
 import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
-import { logger, timeout, waiter } from '@hirosystems/api-toolkit';
+import { PoxInfo, StackingClient } from '@stacks/stacking';
 import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
   StacksTransaction,
@@ -17,9 +19,7 @@ import {
   getAddressFromPrivateKey,
   getPublicKey,
 } from '@stacks/transactions';
-import { TransactionVersion, bytesToHex, hexToBytes } from '@stacks/common';
-import { NETWORK, TEST_NETWORK, getAddress } from '@scure/btc-signer';
-import { PoxInfo } from '@stacks/stacking';
+import { ENV } from './env';
 import { withRetry, withTimeout } from './utils';
 
 export function newSocketClient(): StacksApiSocketClient {
@@ -186,6 +186,25 @@ export function getAccount(key: string) {
       network.isMainnet() ? NETWORK : TEST_NETWORK
     ) as string,
   };
+}
+
+async function getPoxInfo() {
+  const config = new Configuration({
+    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+  });
+  const api = new InfoApi(config);
+  return await api.getPoxInfo();
+}
+
+export async function waitForNode() {
+  console.log('waiting for node...');
+  await withRetry(1_000, getPoxInfo)();
+}
+
+export async function waitForNextCycle(poxInfo: PoxInfo) {
+  return await waitForBurnBlockHeight(
+    (poxInfo.current_burnchain_block_height as number) + poxInfo.next_reward_cycle_in
+  );
 }
 
 /** Wait until we're in the neglected part of the prepare phase */
