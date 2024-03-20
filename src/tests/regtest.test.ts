@@ -117,7 +117,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
@@ -223,7 +223,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
@@ -329,7 +329,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S1'); // snapshot 1 (steph is stacked, but didn't make it in time for rewards)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
@@ -478,7 +478,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S2'); // snapshot 2 (steph is stacked and extended in the current cycle)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
@@ -632,7 +632,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the extend didn't make it in time)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
@@ -777,6 +777,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S2'); // snapshot 2 (steph was stacked and increased for the current cycle)
 
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
@@ -925,7 +926,7 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
     await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the increase didn't make it in time)
 
-    if (ENV.REGTEST_IGNORE_UNLOCK) return;
+    if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
