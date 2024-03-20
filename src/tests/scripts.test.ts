@@ -1,7 +1,7 @@
 import { StacksDevnet } from '@stacks/network';
 import { StackingClient } from '@stacks/stacking';
 import { ENV } from '../env';
-import { getAccount, getRewardSlots, getRewards, getTransactions } from '../helpers';
+import { getAccount, getRewardSlots, getTransactions } from '../helpers';
 
 test('get account status', async () => {
   const steph = getAccount(ENV.REGTEST_KEYS[0]);
