@@ -10,7 +10,7 @@ import {
 } from '@stacks/blockchain-api-client';
 import { TransactionVersion, bytesToHex, hexToBytes } from '@stacks/common';
 import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
-import { PoxInfo, StackingClient } from '@stacks/stacking';
+import { PoxInfo } from '@stacks/stacking';
 import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
   StacksTransaction,

@@ -32,15 +32,29 @@ const schema = Type.Object({
       '21d43d2ae0da1d9d04cfcaac7d397a33733881081f0b2cd038062cf0ccbb752601',
     ],
   }),
-  /** Signer private key for generating signatures */
+  /**
+   * Signer private key for generating signatures.
+   * On regtest-env, this should be the private key of a participating signer.
+   */
   SIGNER_KEY: Type.String({
     default: '6a1a754ba863d7bab14adbbc3f8ebb090af9e871ace621d3e5ab634e1422885e01',
   }),
 
-  REGTEST_UP_CMD: Type.String(),
-  REGTEST_DOWN_CMD: Type.String(),
+  /**
+   * Command to run to start regtest-env.
+   * e.g. this could `cd` into the regtest-env directory and run `docker compose up -d`
+   */
+  REGTEST_UP_CMD: Type.String({ default: "echo 'no-op'" }),
+  /**
+   * Command to run to stop regtest-env.
+   * e.g. this could `cd` into the regtest-env directory and run `docker compose down`
+   */
+  REGTEST_DOWN_CMD: Type.String({ default: "echo 'no-op'" }),
 
-  /** If true, ignores waiting for unlock and verifying rewards in regtest tests */
+  /**
+   * If true, doesn't wait for unlock and verifying rewards in regtest tests.
+   * Useful for speeding up tests when running many long-running regtest-env tests
+   */
   REGTEST_SKIP_UNLOCK: Type.Boolean({ default: false }),
 });
 type Env = Static<typeof schema>;
