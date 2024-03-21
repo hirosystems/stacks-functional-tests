@@ -30,6 +30,7 @@ const schema = Type.Object({
       // taken from regtest-env `stacks-kryton-miner.toml`
       'cb3df38053d132895220b9ce471f6b676db5b9bf0b4adefb55f2118ece2478df01',
       '21d43d2ae0da1d9d04cfcaac7d397a33733881081f0b2cd038062cf0ccbb752601',
+      '5b8303150239eceaba43892af7cdd1fa7fc26eda5182ebaaa568e3341d54a4d001',
     ],
   }),
   /**
