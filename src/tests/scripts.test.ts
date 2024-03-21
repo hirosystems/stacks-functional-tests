@@ -16,6 +16,11 @@ test('get account', () => {
   console.log(steph);
 });
 
+test('get signer', () => {
+  const signer = getAccount(ENV.SIGNER_KEY);
+  console.log(signer);
+});
+
 test('get reward slot', async () => {
   const steph = getAccount(ENV.REGTEST_KEYS[0]);
   const rewards = await getRewardSlots(steph.btcAddress);
