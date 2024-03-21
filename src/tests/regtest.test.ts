@@ -59,7 +59,7 @@ describe('regtest-env pox-4', () => {
     const currentCycle = poxInfo.reward_cycle_id;
     const nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     const authId = crypto.randomBytes(1)[0];
     const signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -164,7 +164,7 @@ describe('regtest-env pox-4', () => {
     const currentCycle = poxInfo.reward_cycle_id;
     const nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     const authId = crypto.randomBytes(1)[0];
     const signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -271,7 +271,7 @@ describe('regtest-env pox-4', () => {
     const currentCycle = poxInfo.reward_cycle_id;
     const nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     const authId = crypto.randomBytes(1)[0];
     const signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -370,7 +370,7 @@ describe('regtest-env pox-4', () => {
     let currentCycle = poxInfo.reward_cycle_id;
     let nextCycle = currentCycle + 1;
     const lockPeriod = 2;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     let authId = crypto.randomBytes(1)[0];
     let signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -520,7 +520,7 @@ describe('regtest-env pox-4', () => {
     let currentCycle = poxInfo.reward_cycle_id;
     let nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     let authId = crypto.randomBytes(1)[0];
     let signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -674,7 +674,7 @@ describe('regtest-env pox-4', () => {
     let currentCycle = poxInfo.reward_cycle_id;
     let nextCycle = currentCycle + 1;
     const lockPeriod = 2;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     let authId = crypto.randomBytes(1)[0];
     let signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -819,7 +819,7 @@ describe('regtest-env pox-4', () => {
     let currentCycle = poxInfo.reward_cycle_id;
     let nextCycle = currentCycle + 1;
     const lockPeriod = 2;
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     let authId = crypto.randomBytes(1)[0];
     let signature = client.signPoxSignature({
       topic: 'stack-stx',
@@ -943,6 +943,10 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
+  // test('pool: delegate-stack (reward-phase)', async () => {
+  // todo: normal pool test
+  // })
+
   test('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
     // TEST CASE
     // alice and bob delegate to a pool
@@ -969,7 +973,7 @@ describe('regtest-env pox-4', () => {
     poxInfo = await client.getPoxInfo();
     expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
 
-    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
     const nextCycle = poxInfo.reward_cycle_id + 1;
     const delegateStackCycles = 2;
 
