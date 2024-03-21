@@ -10,7 +10,7 @@ import {
 } from '@stacks/blockchain-api-client';
 import { TransactionVersion, bytesToHex, hexToBytes } from '@stacks/common';
 import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
-import { PoxInfo } from '@stacks/stacking';
+import { PoxInfo, StackingClient } from '@stacks/stacking';
 import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
   StacksTransaction,
@@ -31,6 +31,16 @@ export function newSocketClient(): StacksApiSocketClient {
 
 export function stacksNetwork(): StacksNetwork {
   const url = `http://${ENV.STACKS_NODE_HOST}:${ENV.STACKS_NODE_PORT}`;
+  switch (ENV.STACKS_CHAIN) {
+    case 'mainnet':
+      return new StacksMainnet({ url });
+    case 'testnet':
+      return new StacksTestnet({ url });
+  }
+}
+
+export function stacksNetworkApi(): StacksNetwork {
+  const url = `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
       return new StacksMainnet({ url });
@@ -171,13 +181,14 @@ export async function getPox4Events() {
 }
 
 export function getAccount(key: string) {
-  const network = stacksNetwork();
+  const network = stacksNetworkApi();
+  const address = getAddressFromPrivateKey(
+    key,
+    network.isMainnet() ? TransactionVersion.Mainnet : TransactionVersion.Testnet
+  );
   return {
     key,
-    address: getAddressFromPrivateKey(
-      key,
-      network.isMainnet() ? TransactionVersion.Mainnet : TransactionVersion.Testnet
-    ),
+    address,
     signerPrivateKey: createStacksPrivateKey(key), // don't do this in production
     signerPublicKey: bytesToHex(getPublicKey(createStacksPrivateKey(key)).data),
     btcAddress: getAddress(
@@ -185,20 +196,21 @@ export function getAccount(key: string) {
       hexToBytes(key).slice(0, 32),
       network.isMainnet() ? NETWORK : TEST_NETWORK
     ) as string,
+    client: new StackingClient(address, network),
   };
 }
 
-async function getPoxInfo() {
+async function getInfoStatus() {
   const config = new Configuration({
     basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
   });
   const api = new InfoApi(config);
-  return await api.getPoxInfo();
+  return await api.getStatus();
 }
 
 export async function waitForNode() {
   console.log('waiting for node...');
-  await withRetry(1_000, getPoxInfo)();
+  await withRetry(1_000, getInfoStatus)();
 }
 
 export async function waitForNextCycle(poxInfo: PoxInfo) {

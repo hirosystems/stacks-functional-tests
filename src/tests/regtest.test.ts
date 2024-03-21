@@ -1,5 +1,6 @@
 import { StacksDevnet } from '@stacks/network';
 import { PoxInfo, StackingClient } from '@stacks/stacking';
+import { Cl, ResponseOkCV, UIntCV, getNonce } from '@stacks/transactions';
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
@@ -15,12 +16,12 @@ import {
   waitForRewardPhase,
   waitForTransaction,
 } from '../helpers';
-import { startRegtestEnv, stopRegtestEnv, storeEventsTsv } from '../utils';
+import { startRegtestEnv, stopRegtestEnv, storeEventsTsv, withRetry } from '../utils';
 
 jest.setTimeout(1_000_000_000);
 
 describe('regtest-env pox-4', () => {
-  const network = new StacksDevnet(); // this test only works on regtest-env
+  const network = new StacksDevnet({ fetchFn: withRetry(3, fetch) }); // this test only works on regtest-env
   let poxInfo: PoxInfo;
 
   beforeEach(async () => {
@@ -342,7 +343,7 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
-  test('stack-stx (reward-phase) and stack-extend (reward-phase)', async () => {
+  test('stack-stx (reward-phase), stack-extend (reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then extends in a reward-phase
@@ -492,7 +493,7 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
-  test('stack-stx (reward-phase) and stack-extend (prepare-phase)', async () => {
+  test('stack-stx (reward-phase), stack-extend (prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then attempts to extend in a prepare-phase
@@ -646,7 +647,7 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
-  test('stack-stx (reward-phase) and stack-increase (reward-phase)', async () => {
+  test('stack-stx (reward-phase), stack-increase (reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a reward-phase
@@ -791,7 +792,7 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
-  test('stack-stx (reward-phase) and stack-increase (prepare-phase)', async () => {
+  test('stack-stx (reward-phase), stack-increase (prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a prepare-phase
@@ -936,7 +937,178 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > stackHeight).length).toBeGreaterThan(0);
     expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
 
-    // todo: (functional) somehow ensure the slots were not increased on the blockchain side
+    // todo: (functional) some how ensure the slots were not increased on the blockchain side
+
+    // EXPORT EVENTS
+    await storeEventsTsv();
+  });
+
+  test('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
+    // TEST CASE
+    // alice and bob delegate to a pool
+    // the pool stacks for alice (in the reward-phase)
+    // the pool commits (in the reward-phase)
+    // the pool stacks for bob (in the prepare-phase)
+    // the pool commit-increases (in the prepare-phase)
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const bob = getAccount(ENV.REGTEST_KEYS[1]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const signer = getAccount(ENV.SIGNER_KEY);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = (BigInt(poxInfo.min_amount_ustx) * 120n) / 100n;
+    const nextCycle = poxInfo.reward_cycle_id + 1;
+    const delegateStackCycles = 2;
+
+    // TRANSACTION (alice delegate-stack)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (bob delegate-stack)
+    const { txid: bobDelegate } = await bob.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: bob.key,
+    });
+    await waitForTransaction(bobDelegate);
+
+    // TRANSACTION (pool alice stack-stx)
+    let poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: delegateStackCycles,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    await waitForTransaction(poolAlice);
+
+    const eventsAlice = (await getPox4Events()).results.filter(
+      r => r.stacker === alice.address && r.pox_addr === pool.btcAddress
+    );
+
+    expect(eventsAlice.map(r => r.data)).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: nextCycle.toString(),
+        end_cycle_id: (nextCycle + delegateStackCycles).toString(),
+      })
+    );
+
+    // TRANSACTION (pool commit)
+    const authId = crypto.randomBytes(1)[0];
+    const signature = pool.client.signPoxSignature({
+      topic: 'agg-commit',
+      period: 1,
+      rewardCycle: nextCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId,
+    });
+    const { txid: poolCommit } = await pool.client.stackAggregationCommitIndexed({
+      poxAddress: pool.btcAddress,
+      rewardCycle: nextCycle,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount * 2n,
+      authId,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const commit = await waitForTransaction(poolCommit);
+    const commitIndex = Cl.deserialize<ResponseOkCV<UIntCV>>(commit.tx_result.hex).value.value;
+
+    const eventsCommit = (await getPox4Events()).results.filter(
+      r => r.pox_addr === pool.btcAddress
+    );
+
+    expect(eventsCommit.map(r => r.data)).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: nextCycle.toString(),
+        end_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be +1
+      })
+    );
+
+    // WAIT FOR PREPARE PHASE
+    poxInfo = await client.getPoxInfo();
+    await waitForPreparePhase(poxInfo);
+
+    // TRANSACTION (pool bob stack-stx)
+    const { txid: poolBob } = await pool.client.delegateStackStx({
+      stacker: bob.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: delegateStackCycles,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    await waitForTransaction(poolBob);
+
+    const eventsBob = (await getPox4Events()).results.filter(
+      r => r.stacker === bob.address && r.pox_addr === pool.btcAddress
+    );
+
+    expect(eventsBob.map(r => r.data)).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
+        end_cycle_id: (nextCycle + delegateStackCycles).toString(),
+      })
+    );
+
+    // CHECK LOCKED
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+    expect(await bob.client.getAccountBalanceLocked()).toBe(amount);
+
+    // TRANSACTION (pool commit-increase)
+    const { txid: poolIncrease } = await pool.client.stackAggregationIncrease({
+      poxAddress: pool.btcAddress,
+      rewardCycle: nextCycle,
+      rewardIndex: commitIndex,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    await waitForTransaction(poolIncrease);
+
+    const eventsIncrease = (await getPox4Events()).results.filter(
+      r => r.pox_addr === pool.btcAddress
+    );
+
+    expect(eventsIncrease.map(r => r.data)).toContainEqual(
+      expect.objectContaining({
+        start_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be // + prepare offset
+        end_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be +1
+      })
+    );
+
+    const rewardSet = await pool.client.getRewardSet({
+      contractId: poxInfo.contract_id,
+      rewardCyleId: nextCycle,
+      rewardSetIndex: Number(commitIndex),
+    });
+    expect(rewardSet).toBeDefined();
+    expect(rewardSet?.total_ustx).toBe(amount * 2n);
 
     // EXPORT EVENTS
     await storeEventsTsv();
