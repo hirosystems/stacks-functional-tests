@@ -1,3 +1,4 @@
+import { timeout } from '@hirosystems/api-toolkit';
 import { StacksDevnet } from '@stacks/network';
 import { PoxInfo, StackingClient } from '@stacks/stacking';
 import { Cl, ResponseOkCV, UIntCV, getNonce } from '@stacks/transactions';
@@ -87,6 +88,9 @@ describe('regtest-env pox-4', () => {
     expect(result.tx_result.repr).toContain('(ok');
     expect(result.tx_status).toBe('success');
 
+    await timeout(1000); // current-cycle: 5
+    await storeEventsTsv('S1'); // snapshot 1 (stacking tx was successful)
+
     // CHECK POX-4 EVENTS
     const { results } = await getPox4Events();
     const datas = results
@@ -115,8 +119,16 @@ describe('regtest-env pox-4', () => {
     ); // same as end_cycle_id
 
     poxInfo = await client.getPoxInfo();
+    await waitForPreparePhase(poxInfo);
+
+    // height: 116
+    await storeEventsTsv('S2'); // snapshot 2 (in prepare phase, pox-anchor block was mined, pox-set has been sent for cycle 6)
+
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
+    poxInfo = await client.getPoxInfo();
+
+    // height: 120, current-cycle: 6
+    await storeEventsTsv('S3'); // snapshot 3 (steph is stacked in the current cycle)
 
     if (ENV.REGTEST_SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
