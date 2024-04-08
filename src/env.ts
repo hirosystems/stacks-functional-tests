@@ -11,13 +11,10 @@ const schema = Type.Object({
   RECEIVER_STX_ADDRESS: Type.String(),
 
   /** Stacks Blockchain API host */
-  STACKS_API_HOST: Type.String(),
-  /** Stacks Blockchain API port */
-  STACKS_API_PORT: Type.Integer(),
+  STACKS_API: Type.String(),
+
   /** Stacks node host */
-  STACKS_NODE_HOST: Type.String(),
-  /** Stacks node port */
-  STACKS_NODE_PORT: Type.Integer(),
+  STACKS_NODE: Type.String(),
 
   STACKS_TX_TIMEOUT: Type.Integer({ default: 15_000 }),
 
@@ -38,7 +35,7 @@ const schema = Type.Object({
    * On regtest-env, this should be the private key of a participating signer.
    */
   SIGNER_KEY: Type.String({
-    default: '6a1a754ba863d7bab14adbbc3f8ebb090af9e871ace621d3e5ab634e1422885e01',
+    default: '7036b29cb5e235e5fd9b09ae3e8eec4404e44906814d5d01cbca968a60ed4bfb01',
   }),
 
   /**
