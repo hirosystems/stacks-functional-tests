@@ -1,7 +1,16 @@
 import { timeout } from '@hirosystems/api-toolkit';
+import { bytesToHex } from '@stacks/common';
 import { StacksDevnet } from '@stacks/network';
-import { PoxInfo, StackingClient } from '@stacks/stacking';
-import { Cl, ResponseOkCV, UIntCV, getNonce } from '@stacks/transactions';
+import { PoxInfo, StackingClient, poxAddressToTuple } from '@stacks/stacking';
+import {
+  Cl,
+  ResponseOkCV,
+  SignedContractCallOptions,
+  UIntCV,
+  broadcastTransaction,
+  getNonce,
+  makeContractCall,
+} from '@stacks/transactions';
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
@@ -955,10 +964,6 @@ describe('regtest-env pox-4', () => {
     await storeEventsTsv();
   });
 
-  // test('pool: delegate-stack (reward-phase)', async () => {
-  // todo: normal pool test
-  // })
-
   test('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
     // TEST CASE
     // alice and bob delegate to a pool
@@ -1128,5 +1133,648 @@ describe('regtest-env pox-4', () => {
 
     // EXPORT EVENTS
     await storeEventsTsv();
+  });
+
+  test.skip('pool: agg increase over maxAmount', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate stacks for alice (a part of her delegated amount)
+    // pool commits
+    // pool delegate stack increases for alice (the remaining amount)
+    // pool increases commit, but the signature was only for the initial amount
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const signer = getAccount(ENV.SIGNER_KEY);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const fullAmount = BigInt(poxInfo.min_amount_ustx) * 6n;
+    const nextCycle = poxInfo.reward_cycle_id + 1;
+    const delegateStackCycles = 3;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: fullAmount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
+    expect(aliceDelegateTx.tx_status).toBe('success');
+    expect(aliceDelegateTx.tx_result.repr).toContain('(ok');
+
+    // TRANSACTION (pool delegate-stack-stx)
+    let poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: fullAmount * (2n / 5n),
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: delegateStackCycles,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_status).toBe('success');
+    expect(poolAliceTx.tx_result.repr).toContain('(ok');
+
+    // TRANSACTION (pool commit)
+    const authId = crypto.randomBytes(1)[0];
+    const signature = pool.client.signPoxSignature({
+      topic: 'agg-commit',
+      period: 1,
+      rewardCycle: nextCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: fullAmount * (2n / 5n),
+      authId,
+    });
+    const { txid: poolCommit } = await pool.client.stackAggregationCommitIndexed({
+      poxAddress: pool.btcAddress,
+      rewardCycle: nextCycle,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: fullAmount * (2n / 5n),
+      authId,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const commit = await waitForTransaction(poolCommit);
+    const commitIndex = Cl.deserialize<ResponseOkCV<UIntCV>>(commit.tx_result.hex).value.value;
+
+    expect(commit.tx_status).toBe('success');
+    expect(commit.tx_result.repr).toContain('(ok');
+
+    // TRANSACTION (pool delegate-stack-increase)
+    const { txid: poolAliceInc } = await pool.client.delegateStackIncrease({
+      stacker: alice.address,
+      poxAddress: pool.btcAddress,
+      increaseBy: fullAmount * (3n / 5n), // more than the initial amount
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolAliceIncTx = await waitForTransaction(poolAliceInc);
+    expect(poolAliceIncTx.tx_status).toBe('success');
+    expect(poolAliceIncTx.tx_result.repr).toContain('(ok');
+
+    // TRANSACTION (pool commit-increase)
+    const { txid: poolInc } = await pool.client.stackAggregationIncrease({
+      poxAddress: pool.btcAddress,
+      rewardCycle: nextCycle,
+      rewardIndex: commitIndex,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolIncTx = await waitForTransaction(poolInc);
+    expect(poolIncTx.tx_status).toBe('success');
+    expect(poolIncTx.tx_result.repr).toContain('(ok');
+
+    // CHECK LOCKED
+    expect(await alice.client.getAccountBalanceLocked()).toBe(fullAmount);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+
+    const rewardSet = await pool.client.getRewardSet({
+      contractId: poxInfo.contract_id,
+      rewardCyleId: nextCycle,
+      rewardSetIndex: Number(commitIndex),
+    });
+    expect(rewardSet).toBeDefined();
+    expect(rewardSet?.total_ustx).toBe(fullAmount);
+
+    // EXPORT EVENTS
+    await storeEventsTsv();
+  });
+
+  test('pool: delegate with invalid hashbyte length', async () => {
+    // TEST CASE
+    // alice delegates to a pool with an invalid hashbyte length
+    // the transaction should fail (but won't)
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const contract = await client.getStackingContract();
+    const [contractAddress, contractName] = client.parseContractId(contract);
+
+    const address: any = Cl.some(poxAddressToTuple(pool.btcAddress));
+    console.log(bytesToHex(address.value.data.hashbytes.buffer as Uint8Array));
+    address.value.data.hashbytes.buffer = address.value.data.hashbytes.buffer.slice(2); // remove two first bytes
+    console.log(bytesToHex(address.value.data.hashbytes.buffer as Uint8Array));
+
+    const callOptions: SignedContractCallOptions = {
+      contractAddress,
+      contractName,
+
+      functionName: 'delegate-stx',
+      functionArgs: [Cl.uint(amount), Cl.address(pool.address), Cl.none(), address],
+
+      validateWithAbi: true,
+      anchorMode: 'onChainOnly',
+      network,
+
+      senderKey: alice.key,
+    };
+    const tx = await makeContractCall(callOptions);
+    const { txid: aliceDelegate } = await broadcastTransaction(tx, network);
+
+    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
+    expect(aliceDelegateTx.tx_result.repr).toContain('(err 23');
+    expect(aliceDelegateTx.tx_status).toBe('aborted_by_response');
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress, // will be different to the one alice delegated to
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(ok');
+    expect(poolAliceTx.tx_status).toBe('success');
+
+    // wait a bit to see what happens
+    poxInfo = await client.getPoxInfo();
+    await waitForBurnBlockHeight(
+      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+    );
+
+    expect((await client.getPoxInfo()).current_burnchain_block_height).toBe(
+      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+    );
+  });
+
+  test('Pool delegate can only delegate-stack-stx for the next cycle', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate stacks for alice (in the reward-phase) for a cycle that is not the next cycle
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight:
+        (poxInfo.current_burnchain_block_height as number) + poxInfo.reward_cycle_length,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Cannot stack if delegating', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // alice stacks for herself
+    // pool delegate stacks for alice (in the reward-phase)
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (alice stack-stx)
+    const signature = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: 2,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: alice.signerPrivateKey,
+      maxAmount: amount,
+      authId: 0,
+    });
+    const { txid: aliceStack } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: alice.btcAddress,
+      cycles: 2,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      signerKey: alice.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount,
+      authId: 0,
+      privateKey: alice.key,
+    });
+    const aliceStackTx = await waitForTransaction(aliceStack);
+    expect(aliceStackTx.tx_result.repr).toBe('(err 20)');
+    expect(aliceStackTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool delegate cannot delegate-stack-stx if already stacking', async () => {
+    // TEST CASE
+    // alice stacks for herself
+    // alice delegates to a pool
+    // pool delegate stacks for alice (in the reward-phase)
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice stack-stx)
+    const signature = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: 2,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: alice.signerPrivateKey,
+      maxAmount: amount,
+      authId: 0,
+    });
+    const { txid: aliceStack } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: alice.btcAddress,
+      cycles: 2,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      signerKey: alice.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount,
+      authId: 0,
+      privateKey: alice.key,
+    });
+    const aliceStackTx = await waitForTransaction(aliceStack);
+    expect(aliceStackTx.tx_result.repr).toContain('(ok');
+    expect(aliceStackTx.tx_status).toBe('success');
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate stacks for alice (with a higher amount)
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount * 2n,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool', async () => {
+    // TEST CASE
+    // alice delegates to a pool A
+    // pool B tries to delegate-stack-stx for alice
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const poolA = getAccount(ENV.REGTEST_KEYS[1]);
+    const poolB = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: poolA.address,
+      poxAddress: poolA.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(poolB.address, network);
+    const { txid: poolAlice } = await poolB.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: poolB.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: poolB.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool delegate cannot delegate-stack-stx for the current cycle', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate stacks for alice (in the reward-phase) for the current cycle
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight:
+        (poxInfo.current_burnchain_block_height as number) - poxInfo.reward_cycle_length,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker', async () => {
+    // TEST CASE
+    // pool delegate stacks for alice (in the reward-phase)
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate stacks for alice (in the reward-phase)
+    // alice revokes the delegation
+    // alice is still locked
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceDelegate);
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+      nonce: poolNonce,
+    });
+    await waitForTransaction(poolAlice);
+
+    // TRANSACTION (alice revoke)
+    const { txid: aliceRevoke } = await alice.client.revokeDelegateStx({
+      delegatee: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    await waitForTransaction(aliceRevoke);
+
+    // CHECK LOCKED
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForNextCycle(poxInfo);
+
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
   });
 });

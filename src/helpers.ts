@@ -24,13 +24,13 @@ import { withRetry, withTimeout } from './utils';
 
 export function newSocketClient(): StacksApiSocketClient {
   return new StacksApiSocketClient({
-    url: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    url: ENV.STACKS_API,
     socketOpts: { reconnection: false },
   });
 }
 
 export function stacksNetwork(): StacksNetwork {
-  const url = `http://${ENV.STACKS_NODE_HOST}:${ENV.STACKS_NODE_PORT}`;
+  const url = ENV.STACKS_NODE;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
       return new StacksMainnet({ url });
@@ -40,7 +40,7 @@ export function stacksNetwork(): StacksNetwork {
 }
 
 export function stacksNetworkApi(): StacksNetwork {
-  const url = `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`;
+  const url = ENV.STACKS_API;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
       return new StacksMainnet({ url });
@@ -88,7 +88,7 @@ export function isInPreparePhase(blockHeight: number, poxInfo: PoxInfo): boolean
 
 export async function getNextNonce(fromStacksNode: boolean = true): Promise<number> {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new AccountsApi(config);
   if (fromStacksNode) {
@@ -102,7 +102,7 @@ export async function getNextNonce(fromStacksNode: boolean = true): Promise<numb
 
 export async function getRewards(btcAddress: string) {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new StackingRewardsApi(config);
   return (await api.getBurnchainRewardListByAddress({ address: btcAddress })).results;
@@ -110,7 +110,7 @@ export async function getRewards(btcAddress: string) {
 
 export async function getRewardSlots(btcAddress: string) {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new StackingRewardsApi(config);
   return (await api.getBurnchainRewardSlotHoldersByAddress({ address: btcAddress })).results;
@@ -118,7 +118,7 @@ export async function getRewardSlots(btcAddress: string) {
 
 export const getBurnBlockHeight = withRetry(3, async () => {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new InfoApi(config);
   const result = await api.getCoreApiInfo();
@@ -127,7 +127,7 @@ export const getBurnBlockHeight = withRetry(3, async () => {
 
 export async function getTransaction(txid: string) {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new TransactionsApi(config);
   try {
@@ -139,7 +139,7 @@ export async function getTransaction(txid: string) {
 
 export async function getTransactions(address: string) {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new AccountsApi(config);
   try {
@@ -150,7 +150,7 @@ export async function getTransactions(address: string) {
 }
 
 export async function getPox4Events() {
-  const basePath = `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`;
+  const basePath = ENV.STACKS_API;
   return fetch(`${basePath}/extended/v1/pox4/events`).then(
     res =>
       res.json() as Promise<{
@@ -202,7 +202,7 @@ export function getAccount(key: string) {
 
 async function getInfoStatus() {
   const config = new Configuration({
-    basePath: `http://${ENV.STACKS_API_HOST}:${ENV.STACKS_API_PORT}`,
+    basePath: ENV.STACKS_API,
   });
   const api = new InfoApi(config);
   return await api.getStatus();
