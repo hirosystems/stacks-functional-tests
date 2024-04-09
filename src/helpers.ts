@@ -205,7 +205,10 @@ async function getInfoStatus() {
     basePath: ENV.STACKS_API,
   });
   const api = new InfoApi(config);
-  return await api.getStatus();
+  return await Promise.race([
+    api.getStatus(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ENV.RETRY_INTERVAL)),
+  ]);
 }
 
 export async function waitForNode() {

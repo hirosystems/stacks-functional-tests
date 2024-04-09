@@ -46,8 +46,6 @@ describe('nakamoto pox-4', () => {
     const status = await bob.client.getStatus();
     console.log(status);
 
-    console.log(bob.client.network.getAccountExtendedBalancesApiUrl('bla'));
-
     const balance = await bob.client.getAccountBalanceLocked();
     const locked = await bob.client.getAccountBalanceLocked();
     console.log('locked', locked);

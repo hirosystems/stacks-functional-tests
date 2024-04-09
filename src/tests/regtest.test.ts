@@ -14,6 +14,7 @@ import {
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
+  broadcastAndWaitForTransaction,
   burnHeightToRewardCycle,
   getAccount,
   getPox4Events,
@@ -1776,5 +1777,120 @@ describe('regtest-env pox-4', () => {
     await waitForNextCycle(poxInfo);
 
     expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+  });
+
+  test('Pool can pre-approve a signature for participants', async () => {
+    // TEST CASE
+    // pool can create a signature and push it to pox state
+    // alice can't use the signature with an incorrect period
+    // alice can use the signature while only knowing the signer-key, max-amount, auth-id
+    // bob can't use the consumed signature
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const bob = getAccount(ENV.REGTEST_KEYS[1]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation + 1);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (pool pre-approve)
+    const period = 1;
+    const rewardCycle = poxInfo.reward_cycle_id;
+    const maxAmount = amount * 2n;
+    const authId = crypto.randomBytes(1)[0];
+    const signature = pool.client.signPoxSignature({
+      topic: 'stack-stx',
+      period,
+      rewardCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: pool.signerPrivateKey,
+      maxAmount,
+      authId,
+    });
+    const [contractAddress, contractName] = client.parseContractId(poxInfo.contract_id);
+    const tx = await makeContractCall({
+      contractAddress,
+      contractName,
+      functionName: 'set-signer-key-authorization',
+      functionArgs: [
+        poxAddressToTuple(pool.btcAddress), // pox-addr
+        Cl.uint(period), // period
+        Cl.uint(rewardCycle), // reward-cycle
+        Cl.stringAscii('stack-stx'), // topic
+        Cl.bufferFromHex(pool.signerPublicKey), // signer-key
+        Cl.bool(true), // allowed
+        Cl.uint(maxAmount), // max-amount
+        Cl.uint(authId), // auth-id
+      ],
+      anchorMode: 'onChainOnly',
+      network,
+      senderKey: pool.key,
+    });
+    const poolPreApproveTx = await broadcastAndWaitForTransaction(tx, network);
+    expect(poolPreApproveTx.tx_result.repr).toContain('(ok');
+    expect(poolPreApproveTx.tx_status).toBe('success');
+
+    // TRANSACTION (alice stack)
+    const { txid: aliceStackLong } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+
+      signerKey: pool.signerPublicKey,
+      signerSignature: signature,
+      cycles: 10,
+      maxAmount,
+      authId,
+
+      privateKey: alice.key,
+    });
+    const aliceStackLongTx = await waitForTransaction(aliceStackLong);
+    expect(aliceStackLongTx.tx_result.repr).toContain('(err');
+    expect(aliceStackLongTx.tx_status).toBe('abort_by_response');
+
+    // TRANSACTION (alice stack)
+    const { txid: aliceStack } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+
+      signerKey: pool.signerPublicKey,
+      cycles: period,
+      maxAmount,
+      authId,
+
+      privateKey: alice.key,
+    });
+    const aliceStackTx = await waitForTransaction(aliceStack);
+    expect(aliceStackTx.tx_result.repr).toContain('(ok');
+    expect(aliceStackTx.tx_status).toBe('success');
+
+    // TRANSACTION (bob stack)
+    const { txid: bobStack } = await bob.client.stack({
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+
+      signerKey: pool.signerPublicKey,
+      cycles: period,
+      maxAmount,
+      authId,
+
+      privateKey: bob.key,
+    });
+    const bobStackTx = await waitForTransaction(bobStack);
+    expect(bobStackTx.tx_result.repr).toContain('(err');
+    expect(bobStackTx.tx_status).toBe('abort_by_response');
   });
 });
