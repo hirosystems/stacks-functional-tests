@@ -1893,4 +1893,163 @@ describe('regtest-env pox-4', () => {
     expect(bobStackTx.tx_result.repr).toContain('(err');
     expect(bobStackTx.tx_status).toBe('abort_by_response');
   });
+
+  test('Stacker switches signers for stack-increase', async () => {
+    // TEST CASE
+    // alice solo stacks with signer A
+    // alice increases stack with signer B
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const signerA = getAccount(ENV.REGTEST_KEYS[1]);
+    const signerB = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation + 1);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx);
+
+    // TRANSACTION (alice solo stack)
+    const signatureA = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: 1,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: signerA.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId: 0,
+    });
+    const { txid: aliceStack } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: alice.btcAddress,
+      cycles: 1,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+
+      signerKey: signerA.signerPublicKey,
+      signerSignature: signatureA,
+      maxAmount: amount * 2n,
+      authId: 0,
+
+      privateKey: alice.key,
+    });
+    const aliceStackTx = await waitForTransaction(aliceStack);
+    expect(aliceStackTx.tx_result.repr).toContain('(ok');
+    expect(aliceStackTx.tx_status).toBe('success');
+
+    // TRANSACTION (alice increase stack)
+    const signatureB = client.signPoxSignature({
+      topic: 'stack-increase',
+      period: 1,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: signerB.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId: 0,
+    });
+    const { txid: aliceIncrease } = await alice.client.stackIncrease({
+      increaseBy: amount,
+
+      signerKey: signerB.signerPublicKey,
+      signerSignature: signatureB,
+      poxAddress: alice.btcAddress,
+      rewardCycle: poxInfo.reward_cycle_id,
+      maxAmount: amount * 2n,
+      authId: 0,
+
+      privateKey: alice.key,
+    });
+    const aliceIncreaseTx = await waitForTransaction(aliceIncrease);
+    expect(aliceIncreaseTx.tx_result.repr).toContain('(err');
+    expect(aliceIncreaseTx.tx_status).toBe('abort_by_response');
+  });
+
+  test('Stacker switches signers for stack-extend', async () => {
+    // TEST CASE
+    // alice solo stacks with signer A
+    // alice extends stack with signer B
+    // the transaction should work, because it's essentially like a new stack (separate from the first)
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const signerA = getAccount(ENV.REGTEST_KEYS[1]);
+    const signerB = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation + 1);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx);
+
+    // TRANSACTION (alice solo stack)
+    const signatureA = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: 1,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: signerA.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId: 0,
+    });
+    const { txid: aliceStack } = await alice.client.stack({
+      amountMicroStx: amount,
+      poxAddress: alice.btcAddress,
+      cycles: 1,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+
+      signerKey: signerA.signerPublicKey,
+      signerSignature: signatureA,
+      maxAmount: amount * 2n,
+      authId: 0,
+
+      privateKey: alice.key,
+    });
+    const aliceStackTx = await waitForTransaction(aliceStack);
+    expect(aliceStackTx.tx_result.repr).toContain('(ok');
+    console.log(aliceStackTx.tx_result.repr);
+    expect(aliceStackTx.tx_status).toBe('success');
+
+    // TRANSACTION (alice increase stack)
+    const signatureB = client.signPoxSignature({
+      topic: 'stack-extend',
+      period: 1,
+      rewardCycle: poxInfo.reward_cycle_id,
+      poxAddress: alice.btcAddress,
+      signerPrivateKey: signerB.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId: 0,
+    });
+    const { txid: aliceIncrease } = await alice.client.stackExtend({
+      extendCycles: 1,
+
+      signerKey: signerB.signerPublicKey,
+      signerSignature: signatureB,
+      poxAddress: alice.btcAddress,
+      rewardCycle: poxInfo.reward_cycle_id,
+      maxAmount: amount * 2n,
+      authId: 0,
+
+      privateKey: alice.key,
+    });
+    const aliceIncreaseTx = await waitForTransaction(aliceIncrease);
+    expect(aliceIncreaseTx.tx_result.repr).toContain('(ok');
+    expect(aliceIncreaseTx.tx_status).toBe('success');
+  });
 });
