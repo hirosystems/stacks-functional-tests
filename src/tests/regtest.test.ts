@@ -2813,4 +2813,58 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_result.repr).toContain('(err');
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
+
+  test('Pool stacker can revoke delegate status (revoke-delegate-stx)', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // alice revokes the delegation
+    // pool tries to delegate-stack for alice
+    // the transaction should fail
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+    await waitForBurnBlockHeight(pox4Activation + 1);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
+    expect(aliceDelegateTx.tx_result.repr).toContain('(ok');
+    expect(aliceDelegateTx.tx_status).toBe('success');
+
+    // TRANSACTION (alice revoke)
+    const { txid: aliceRevoke } = await alice.client.revokeDelegateStx({
+      privateKey: alice.key,
+    });
+    const aliceRevokeTx = await waitForTransaction(aliceRevoke);
+    expect(aliceRevokeTx.tx_result.repr).toContain('(ok');
+    expect(aliceRevokeTx.tx_status).toBe('success');
+
+    // TRANSACTION (pool delegate-stack-stx)
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 2,
+      privateKey: pool.key,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(err');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
+  });
 });
