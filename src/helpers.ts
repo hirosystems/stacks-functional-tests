@@ -287,9 +287,14 @@ export async function broadcastAndWaitForTransaction(
 
   const broadcast = await broadcastTransaction(tx, network);
   logger.debug(`Broadcast: 0x${broadcast.txid}`);
-  if (broadcast.error) logger.error(broadcast.error);
-  if (broadcast.reason) logger.error(broadcast.reason);
-  if (broadcast.reason_data) logger.error(broadcast.reason_data);
+
+  if (broadcast.error) {
+    logger.error(broadcast.error);
+    if (broadcast.reason) logger.error(broadcast.reason);
+    if (broadcast.reason_data) logger.error(broadcast.reason_data);
+    throw 'broadcast failed';
+  }
+
   const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
     if ('block_hash' in tx) {
       logger.debug(`Confirmed: 0x${broadcast.txid}`);
