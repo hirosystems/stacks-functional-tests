@@ -2867,4 +2867,76 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_result.repr).toContain('(err');
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
+
+  test('Pool delegate can successfully delegate-stack-extend', async () => {
+    // TEST CASE
+    // alice delegates to a pool
+    // pool delegate-stack-stx for alice
+    // pool delegate-stack-extend for alice
+    // lock has been extended
+
+    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient('', network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+    await waitForBurnBlockHeight(pox4Activation + 1);
+
+    poxInfo = await client.getPoxInfo();
+
+    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
+
+    // TRANSACTION (alice delegate)
+    const { txid: aliceDelegate } = await alice.client.delegateStx({
+      amountMicroStx: amount,
+      delegateTo: pool.address,
+      poxAddress: pool.btcAddress,
+      privateKey: alice.key,
+    });
+    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
+    expect(aliceDelegateTx.tx_result.repr).toContain('(ok');
+    expect(aliceDelegateTx.tx_status).toBe('success');
+
+    // TRANSACTION (pool delegate-stack-stx)
+    let poolNonce = await getNonce(pool.address, network);
+    const { txid: poolAlice } = await pool.client.delegateStackStx({
+      stacker: alice.address,
+      amountMicroStx: amount,
+      poxAddress: pool.btcAddress,
+      burnBlockHeight: poxInfo.current_burnchain_block_height,
+      cycles: 1,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolAliceTx = await waitForTransaction(poolAlice);
+    expect(poolAliceTx.tx_result.repr).toContain('(ok');
+    expect(poolAliceTx.tx_status).toBe('success');
+
+    // CHECK LOCKED
+    const status = await alice.client.getStatus();
+    if (!status.stacked) throw 'not stacked';
+    expect(status.details.unlock_height).toBeGreaterThan(0);
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+
+    // TRANSACTION (pool delegate-stack-extend)
+    const { txid: poolAlice2 } = await pool.client.delegateStackExtend({
+      stacker: alice.address,
+      poxAddress: pool.btcAddress,
+      extendCount: 1,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolAlice2Tx = await waitForTransaction(poolAlice2);
+    expect(poolAlice2Tx.tx_result.repr).toContain('(ok');
+    expect(poolAlice2Tx.tx_status).toBe('success');
+
+    // CHECK LOCKED
+    const statusExtend = await alice.client.getStatus();
+    if (!statusExtend.stacked) throw 'not stacked';
+    expect(statusExtend.details.unlock_height).toBeGreaterThan(status.details.unlock_height);
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+  });
 });
