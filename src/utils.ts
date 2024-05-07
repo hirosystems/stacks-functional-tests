@@ -82,3 +82,8 @@ export async function stopRegtestEnv() {
   // if (out.stderr) throw new Error(out.stderr);
   return out.stdout;
 }
+
+export async function getRegtestSignerLogs() {
+  const out = await x(`docker logs stacks-signer-1 --tail 10`);
+  return out.stdout;
+}
