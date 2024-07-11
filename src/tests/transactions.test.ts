@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 describe('Stacks transactions', () => {
   let network: StacksNetwork;
   let nextNonce: number;
+  const timeout = 30_000;
 
   beforeAll(() => {
     network = stacksNetwork();
@@ -38,7 +39,7 @@ describe('Stacks transactions', () => {
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
-  });
+  }, timeout);
 
   test('Contract deploy', async () => {
     const codeBody = fs.readFileSync(path.join(__dirname, '../contracts/counter.clar'), 'utf-8');
@@ -52,7 +53,7 @@ describe('Stacks transactions', () => {
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
-  });
+  }, timeout);
 
   test('FT contract deploy', async () => {
     const codeBody = fs.readFileSync(
@@ -69,5 +70,5 @@ describe('Stacks transactions', () => {
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
-  });
+  }, timeout);
 });
