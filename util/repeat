@@ -1,0 +1,23 @@
+#!/bin/bash
+# Repeat a command multiple times
+
+print_usage() {
+  echo "Usage: repeat <repeats> <cmd [args...]>"
+}
+
+repeats=$1
+shift
+cmd="$*"
+
+re='^[0-9]+$'
+if ! [[ $repeats =~ $re ]] ; then
+  print_usage
+  exit 1
+fi
+
+for i in $(seq 1 "$repeats");
+do
+  echo "*** Iteration $i ***"
+  eval "$cmd"
+  sleep 1
+done
