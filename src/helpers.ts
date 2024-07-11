@@ -285,6 +285,7 @@ export async function broadcastAndWaitForTransaction(
   const socketClient = newSocketClient();
   const txWaiter = waiter<Transaction>();
 
+  const t0 = performance.now();
   const broadcast = await broadcastTransaction(tx, network);
   logger.debug(`Broadcast: 0x${broadcast.txid}`);
 
@@ -304,6 +305,9 @@ export async function broadcastAndWaitForTransaction(
     }
   });
   const result = await txWaiter;
+  const t1 = performance.now();
+
+  logger.debug(`Transaction ${broadcast.txid} confirmed in ${Math.ceil(t1 - t0)} ms`);
 
   subscription.unsubscribe();
   socketClient.socket.close();
