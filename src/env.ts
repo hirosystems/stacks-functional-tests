@@ -55,10 +55,11 @@ const schema = Type.Object({
    */
   REGTEST_SKIP_UNLOCK: Type.Boolean({ default: false }),
 
-  TESTNET_SEED: Type.String({
+  WALLET_SEED: Type.String({
     default:
       'cake finger oxygen hope home kick squeeze pulse combine nest cable flash dinosaur satoshi brass vast elite bronze humble rule skirt review fade divorce',
   }),
+  WALLET_PASSWORD: Type.String({ default: '' }),
 });
 type Env = Static<typeof schema>;
 

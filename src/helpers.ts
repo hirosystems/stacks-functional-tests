@@ -21,6 +21,7 @@ import {
 } from '@stacks/transactions';
 import { ENV } from './env';
 import { withRetry, withTimeout } from './utils';
+import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
 
 export function newSocketClient(): StacksApiSocketClient {
   return new StacksApiSocketClient({
@@ -30,7 +31,8 @@ export function newSocketClient(): StacksApiSocketClient {
 }
 
 export function stacksNetwork(): StacksNetwork {
-  const url = ENV.STACKS_NODE;
+  //const url = ENV.STACKS_NODE;
+  const url = ENV.STACKS_API;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
       return new StacksMainnet({ url });
@@ -339,3 +341,15 @@ export const waitForTransaction = withTimeout(
     }
   }
 );
+
+export async function getWallet(length: number): Promise<Wallet> {
+  let wallet = await generateWallet({
+    secretKey: ENV.WALLET_SEED,
+    password: ENV.WALLET_PASSWORD,
+  });
+
+  wallet = Array.from({ length })
+    .reduce((acc: Wallet) => generateNewAccount(acc), wallet);
+
+  return wallet;
+}

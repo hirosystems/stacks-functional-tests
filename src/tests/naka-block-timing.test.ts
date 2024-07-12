@@ -3,7 +3,7 @@ import { StackingClient } from '@stacks/stacking';
 import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
 import { ENV } from '../env';
 import { startRegtestEnv, stopRegtestEnv, withRetry } from '../utils';
-import { getAccount, waitForBurnBlockHeight, waitForNode, waitForTransaction } from '../helpers';
+import { getAccount, getWallet, waitForBurnBlockHeight, waitForNode, waitForTransaction } from '../helpers';
 import { broadcastTransaction, makeSTXTokenTransfer } from '@stacks/transactions';
 import { stopwatch } from '@hirosystems/api-toolkit';
 
@@ -27,11 +27,7 @@ describe('nakamoto pox-4', () => {
   });
 
   beforeAll(async () => {
-    wallet = await generateWallet({
-      secretKey: ENV.TESTNET_SEED,
-      password: '',
-    });
-    wallet = Array.from({ length: 7 }).reduce((acc: Wallet) => generateNewAccount(acc), wallet);
+    wallet = await getWallet(7);
     console.log(wallet.accounts.map(a => getAccount(a.stxPrivateKey)));
   });
 
