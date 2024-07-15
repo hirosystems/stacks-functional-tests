@@ -10,10 +10,10 @@ import {
 } from '../helpers';
 import { StacksNetwork } from '@stacks/network';
 import { Wallet } from '@stacks/wallet-sdk';
-import { logger } from '@hirosystems/api-toolkit';
+import { logger, stopwatch } from '@hirosystems/api-toolkit';
 
 // This test requires SENDER_STX_ADDRESS to have at least 100 STX
-// The test will send this to 1000 different addresses, and then they will send it back
+// The test will send this to 10000 different addresses, and then they will send it back
 // This test will measure how well the network handles a massive amount of transactions
 
 // This test takes a long time
@@ -61,7 +61,7 @@ describe('Network load testing', () => {
     await waitForNextNonce(senderNonce);
   });
 
-  test('Send large amount of STX transfers', async () => {
+  test(`Send ${LOAD_TEST_TRANSACTIONS} STX transfers`, async () => {
     // Amount SENDER will need for each transaction
     const amount = 10_000;
     // Use fixed fee so we know we can calculate exact amount to send back
@@ -71,7 +71,9 @@ describe('Network load testing', () => {
     const amount0 = amount - fee;
 
     // Set up test by sending STX to large amount of addresses
-    while (addresses?.length) {
+    logger.debug(`Preparing load test by funding ${LOAD_TEST_TRANSACTIONS} accounts`);
+    const time = stopwatch();
+    for (let batch=1; addresses?.length; batch++) {
       // Send transactions in chunks of MAXIMUM_MEMPOOL_TX_CHAINING
       const addrChunk = addresses.drain(MAXIMUM_MEMPOOL_TX_CHAINING);
     
@@ -88,14 +90,17 @@ describe('Network load testing', () => {
         return await broadcastAndWaitForTransaction(tx, network);
       });
       // Send and wait for all transactions to be confirmed
-      logger.debug(`Submitting block of ${MAXIMUM_MEMPOOL_TX_CHAINING} transactions from SENDER`);
+      logger.debug(`Submitting batch ${batch} of ${MAXIMUM_MEMPOOL_TX_CHAINING} transactions from SENDER`);
+      const timeBatch = stopwatch();
       await Promise.all(txs);
+      logger.debug(`Confirmed batch ${batch} of txs from SENDER in ${timeBatch.getElapsed()} ms`);
     }
+    logger.debug(`Load test setup complete. SENDER funded ${LOAD_TEST_TRANSACTIONS} accounts in ${time.getElapsedSeconds()} seconds`);
 
     const amount1 = amount0 - fee;
 
     // Prepare txs to send from accounts back to SENDER
-    logger.debug(`Preparing to send all STX back to SENDER`);
+    logger.debug(`Preparing ${LOAD_TEST_TRANSACTIONS} STX transfers to SENDER`);
     const privkeys = wallet.accounts.map(a => a.stxPrivateKey);
     let txMake = privkeys.map(async (senderKey: string) => 
         await makeSTXTokenTransfer({
@@ -110,10 +115,11 @@ describe('Network load testing', () => {
     let txs = await Promise.all(txMake);
     
     // Send all STX back to SENDER and wait for confirmation
-    logger.debug(`Sending all STX back to SENDER`);
+    logger.debug(`Sending ${LOAD_TEST_TRANSACTIONS} STX transfers to SENDER`);
+    time.restart();
     let txSend = txs.map(async (tx: StacksTransaction) => await broadcastAndWaitForTransaction(tx, network));
     let results = await Promise.all(txSend);
 
-    logger.debug(`All transfers completed`);
+    logger.debug(`Load test complete. Sent ${LOAD_TEST_TRANSACTIONS} STX transfers to SENDER in ${time.getElapsed()} ms`);
   });
 });
