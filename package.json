@@ -1,13 +1,13 @@
 {
-  "name": "stacks-blackbox-tests",
-  "version": "1.0.0",
+  "name": "stacks-functional-tests",
+  "version": "0.1.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "jest --runInBand"
   },
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "prettier": "@stacks/prettier-config",
   "devDependencies": {
     "@commitlint/cli": "^18.4.4",
