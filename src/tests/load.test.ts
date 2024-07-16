@@ -11,6 +11,7 @@ import {
 import { StacksNetwork } from '@stacks/network';
 import { Wallet } from '@stacks/wallet-sdk';
 import { logger, stopwatch } from '@hirosystems/api-toolkit';
+import { assert } from 'console';
 
 // This test requires SENDER_STX_ADDRESS to have at least 100 STX
 // The test will send this to 10000 different addresses, and then they will send it back
@@ -22,8 +23,12 @@ jest.setTimeout(1_000_000_000);
 // Max transactions an account can make in a single block
 // MUST MATCH VALUE IN stacks-node!!!
 const MAXIMUM_MEMPOOL_TX_CHAINING = 25;
+// Number of txs per batch. Must not exceed MAXIMUM_MEMPOOL_TX_CHAINING 
+const TX_BATCH_SIZE = 5;
 // Number of transactions to use for load testing
 const LOAD_TEST_TRANSACTIONS = 10_000;
+
+assert(TX_BATCH_SIZE <= MAXIMUM_MEMPOOL_TX_CHAINING)
 
 // This gives us something like Rust's `.drain()` method for arrays
 declare global {
@@ -51,6 +56,7 @@ describe('Network load testing', () => {
   beforeAll(async () => {
     network = stacksNetwork();
     wallet = await getWallet(LOAD_TEST_TRANSACTIONS);
+    logger.debug(`Finished generating wallet with ${wallet.accounts.length} accounts`);
   });
 
   beforeEach(async () => {
@@ -74,8 +80,8 @@ describe('Network load testing', () => {
     logger.debug(`Preparing load test by funding ${LOAD_TEST_TRANSACTIONS} accounts`);
     const time = stopwatch();
     for (let batch=1; addresses?.length; batch++) {
-      // Send transactions in chunks of MAXIMUM_MEMPOOL_TX_CHAINING
-      const addrChunk = addresses.drain(MAXIMUM_MEMPOOL_TX_CHAINING);
+      // Send transactions in chunks of TX_BATCH_SIZE
+      const addrChunk = addresses.drain(TX_BATCH_SIZE);
     
       const txs = addrChunk.map(async (recipient: string) => {
         const tx = await makeSTXTokenTransfer({
@@ -90,7 +96,7 @@ describe('Network load testing', () => {
         return await broadcastAndWaitForTransaction(tx, network);
       });
       // Send and wait for all transactions to be confirmed
-      logger.debug(`Submitting batch ${batch} of ${MAXIMUM_MEMPOOL_TX_CHAINING} transactions from SENDER`);
+      logger.debug(`Submitting batch ${batch} of ${TX_BATCH_SIZE} transactions from SENDER`);
       const timeBatch = stopwatch();
       await Promise.all(txs);
       logger.debug(`Confirmed batch ${batch} of txs from SENDER in ${timeBatch.getElapsed()} ms`);

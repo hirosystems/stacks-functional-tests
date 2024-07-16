@@ -1,4 +1,4 @@
-import { logger, timeout, waiter } from '@hirosystems/api-toolkit';
+import { logger, stopwatch, timeout, waiter } from '@hirosystems/api-toolkit';
 import { NETWORK, TEST_NETWORK, getAddress } from '@scure/btc-signer';
 import {
   AccountsApi,
@@ -9,7 +9,7 @@ import {
   TransactionsApi,
 } from '@stacks/blockchain-api-client';
 import { TransactionVersion, bytesToHex, hexToBytes } from '@stacks/common';
-import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
+import { createApiKeyMiddleware, createFetchFn, NetworkConfig, StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
 import { PoxInfo, StackingClient } from '@stacks/stacking';
 import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
@@ -31,8 +31,7 @@ export function newSocketClient(): StacksApiSocketClient {
 }
 
 export function stacksNetwork(): StacksNetwork {
-  //const url = ENV.STACKS_NODE;
-  const url = ENV.STACKS_API;
+  const url = ENV.STACKS_NODE;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
       return new StacksMainnet({ url });
@@ -43,11 +42,19 @@ export function stacksNetwork(): StacksNetwork {
 
 export function stacksNetworkApi(): StacksNetwork {
   const url = ENV.STACKS_API;
+  const apiKey = ENV.STACKS_API_KEY;
+
+  const opts: Partial<NetworkConfig> = { url };
+  if (apiKey?.length) {
+    const apiMiddleware = createApiKeyMiddleware({ apiKey });
+    opts.fetchFn = createFetchFn(apiMiddleware);
+    logger.debug("API key detected, higher rate limits enabled");
+  }
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
-      return new StacksMainnet({ url });
+      return new StacksMainnet(opts);
     case 'testnet':
-      return new StacksTestnet({ url });
+      return new StacksTestnet(opts);
   }
 }
 
@@ -287,15 +294,20 @@ export async function broadcastAndWaitForTransaction(
   const socketClient = newSocketClient();
   const txWaiter = waiter<Transaction>();
 
-  const t0 = performance.now();
+  const time = stopwatch();
   const broadcast = await broadcastTransaction(tx, network);
   logger.debug(`Broadcast: 0x${broadcast.txid}`);
 
-  if (broadcast.error) {
+  if (!broadcast) {
+    throw 'Broadcast failed, unknown error';
+  } else if (broadcast.error) {
     logger.error(broadcast.error);
     if (broadcast.reason) logger.error(broadcast.reason);
     if (broadcast.reason_data) logger.error(broadcast.reason_data);
-    throw 'broadcast failed';
+    throw 'Broadcast failed';
+  } else if (!broadcast.txid) {
+    logger.error(broadcast);
+    throw 'Malformed broadcast result, no txid';
   }
 
   const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
@@ -307,9 +319,8 @@ export async function broadcastAndWaitForTransaction(
     }
   });
   const result = await txWaiter;
-  const t1 = performance.now();
 
-  logger.debug(`Transaction ${broadcast.txid} confirmed in ${Math.ceil(t1 - t0)} ms`);
+  logger.debug(`Transaction ${broadcast.txid} confirmed in ${time.getElapsed()} ms`);
 
   subscription.unsubscribe();
   socketClient.socket.close();

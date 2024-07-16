@@ -12,6 +12,8 @@ const schema = Type.Object({
 
   /** Stacks Blockchain API host */
   STACKS_API: Type.String(),
+  /** Optional key for `STACKS_API` for higher rate limits */
+  STACKS_API_KEY: Type.String({ default: '' }),
 
   /** Stacks node host */
   STACKS_NODE: Type.String(),
