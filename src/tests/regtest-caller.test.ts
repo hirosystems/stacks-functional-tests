@@ -1,5 +1,8 @@
-import { RequestContext, StacksDevnet, createFetchFn } from '@stacks/network';
+import { ResponseContext } from '@stacks/blockchain-api-client';
+import { StacksDevnet, createFetchFn } from '@stacks/network';
 import { PoxInfo, StackingClient } from '@stacks/stacking';
+import { Cl, makeContractCall, makeContractDeploy } from '@stacks/transactions';
+import fs from 'fs';
 import { ENV } from '../env';
 import {
   broadcastAndWaitForTransaction,
@@ -9,9 +12,6 @@ import {
   waitForTransaction,
 } from '../helpers';
 import { startRegtestEnv, stopRegtestEnv, withRetry } from '../utils';
-import { Cl, makeContractCall, makeContractDeploy } from '@stacks/transactions';
-import fs from 'fs';
-import { ResponseContext } from '@stacks/blockchain-api-client';
 
 jest.setTimeout(1_000_000_000);
 
@@ -408,83 +408,5 @@ describe('regtest-env pox-4 caller', () => {
       expect(revokeDelegateTx.tx_result.repr).toContain('(err');
       expect(revokeDelegateTx.tx_status).toEqual('abort_by_response');
     });
-
-    // test('Allowed contract can delegate-stack-stx', async () => {
-    //   // TEST CASE
-    //   // alice allows the pool
-    //   // alice delegate-stx (via wrapper contract)
-    //   // alice delegate-stack-stx (via wrapper contract)
-    //   // pool commits
-    //   // alice is locked
-
-    //   // TRANSACTION (alice allow-contract-caller)
-    //   const [contractAddress, contractName] = client.parseContractId(poxInfo.contract_id);
-    //   const tx = await makeContractCall({
-    //     contractAddress,
-    //     contractName,
-    //     functionName: 'allow-contract-caller',
-    //     functionArgs: [Cl.contractPrincipal(pool.address, 'pox-4'), Cl.none()],
-    //     anchorMode: 'onChainOnly',
-    //     network,
-    //     senderKey: alice.key,
-    //   });
-    //   const allowTx = await broadcastAndWaitForTransaction(tx, network);
-    //   expect(allowTx.tx_result.repr).toContain('(ok');
-    //   expect(allowTx.tx_status).toEqual('success');
-
-    //   const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
-
-    //   // TRANSACTION (wrapped delegate-stx)
-    //   const { txid: delegate } = await pool.wrappedClient.delegateStx({
-    //     amountMicroStx: amount,
-    //     delegateTo: pool.address,
-    //     poxAddress: pool.btcAddress,
-    //     privateKey: alice.key,
-    //   });
-    //   const delegateTx = await waitForTransaction(delegate);
-    //   expect(delegateTx.tx_result.repr).toContain('(ok');
-    //   expect(delegateTx.tx_status).toEqual('success');
-
-    //   //
-
-    //   // TRANSACTION (wrapped delegate-stack-stx)
-    //   const { txid: delegateStack } = await pool.wrappedClient.delegateStackStx({
-    //     stacker: alice.address,
-    //     amountMicroStx: amount,
-    //     poxAddress: pool.btcAddress,
-    //     burnBlockHeight: poxInfo.current_burnchain_block_height,
-    //     cycles: 1,
-    //     privateKey: alice.key,
-    //   });
-    //   const delegateStackTx = await waitForTransaction(delegateStack);
-    //   expect(delegateStackTx.tx_result.repr).toContain('(ok');
-    //   expect(delegateStackTx.tx_status).toEqual('success');
-
-    //   // TRANSACTION (pool commit)
-    //   const signature = pool.client.signPoxSignature({
-    //     topic: 'agg-commit',
-    //     period: 1,
-    //     rewardCycle: poxInfo.reward_cycle_id + 1,
-    //     authId: 0,
-    //     maxAmount: amount,
-    //     poxAddress: pool.btcAddress,
-    //     signerPrivateKey: pool.signerPrivateKey,
-    //   });
-    //   const { txid: commit } = await pool.client.stackAggregationCommitIndexed({
-    //     poxAddress: pool.btcAddress,
-    //     rewardCycle: poxInfo.reward_cycle_id + 1,
-    //     signerKey: pool.signerPublicKey,
-    //     signerSignature: signature,
-    //     maxAmount: amount,
-    //     authId: 0,
-    //     privateKey: pool.key,
-    //   });
-    //   const commitTx = await waitForTransaction(commit);
-    //   expect(commitTx.tx_result.repr).toContain('(ok');
-    //   expect(commitTx.tx_status).toEqual('success');
-
-    //   // CHECK LOCKED
-    //   expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
-    // });
   });
 });
