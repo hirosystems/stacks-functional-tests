@@ -48,7 +48,6 @@ export function stacksNetworkApi(): StacksNetwork {
   if (apiKey?.length) {
     const apiMiddleware = createApiKeyMiddleware({ apiKey });
     opts.fetchFn = createFetchFn(apiMiddleware);
-    logger.debug("API key detected, higher rate limits enabled");
   }
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
@@ -302,8 +301,8 @@ export async function broadcastAndWaitForTransaction(
     throw 'Broadcast failed, unknown error';
   } else if (broadcast.error) {
     logger.error(broadcast.error);
-    if (broadcast.reason) logger.error(broadcast.reason);
-    if (broadcast.reason_data) logger.error(broadcast.reason_data);
+    broadcast.reason && logger.error(broadcast.reason);
+    broadcast.reason_data && logger.error(broadcast.reason_data);
     throw 'Broadcast failed';
   } else if (!broadcast.txid) {
     logger.error(broadcast);
@@ -320,7 +319,7 @@ export async function broadcastAndWaitForTransaction(
   });
   const result = await txWaiter;
 
-  logger.debug(`Transaction ${broadcast.txid} confirmed in ${time.getElapsed()} ms`);
+  logger.debug(`Transaction 0x${broadcast.txid} confirmed in ${time.getElapsed()} ms`);
 
   subscription.unsubscribe();
   socketClient.socket.close();
@@ -358,6 +357,9 @@ export async function getWallet(length: number): Promise<Wallet> {
     secretKey: ENV.WALLET_SEED,
     password: ENV.WALLET_PASSWORD,
   });
+
+  // Don't need to add accounts we already have
+  length -= wallet.accounts.length;
 
   wallet = Array.from({ length })
     .reduce((acc: Wallet) => generateNewAccount(acc), wallet);
