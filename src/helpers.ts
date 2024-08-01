@@ -289,13 +289,13 @@ export async function waitForBurnBlockHeight(
     if (currentHeight === lastHeight) {
       if (Date.now() - lastHeightTime > ENV.BITCOIN_TX_TIMEOUT) {
         throw new Error(
-          `Burn block height hasn't changed for ${ENV.BITCOIN_TX_TIMEOUT} milliseconds`
+          `Burn block height hasn't changed for ${ENV.BITCOIN_TX_TIMEOUT / 1000} seconds`
         );
       }
     } else {
       lastHeight = currentHeight;
       lastHeightTime = Date.now();
-      console.log(`waiting for burn block ${burnBlockHeight} (current ${currentHeight})`);
+      console.log(`block height ${currentHeight} (waiting for ${burnBlockHeight})`);
     }
 
     await timeout(interval);

@@ -83,7 +83,7 @@ describe('regtest-env pox-4', () => {
       maxAmount: amount,
       authId,
     });
-    const res = await client.stack({
+    const { txid } = await client.stack({
       amountMicroStx: amount,
       poxAddress: steph.btcAddress,
       cycles: lockPeriod,
@@ -94,10 +94,9 @@ describe('regtest-env pox-4', () => {
       authId,
       privateKey: steph.key,
     });
-    console.log('res', res);
-    console.log('txid', res.txid);
+    console.log('txid', txid);
 
-    const result = await waitForTransaction(res.txid);
+    const result = await waitForTransaction(txid);
     expect(result.tx_result.repr).toContain('(ok');
     expect(result.tx_status).toBe('success');
 
@@ -140,6 +139,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(200);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 

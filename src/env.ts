@@ -47,11 +47,11 @@ const schema = Type.Object({
    */
   SKIP_UNLOCK: Type.Boolean({ default: false }),
 
-  POLL_INTERVAL: Type.Integer({ default: 750 }),
+  POLL_INTERVAL: Type.Integer({ default: 200 }),
   RETRY_INTERVAL: Type.Integer({ default: 500 }),
 
   STACKS_TX_TIMEOUT: Type.Integer({ default: 10_000 }),
-  BITCOIN_TX_TIMEOUT: Type.Integer({ default: 15_000 }),
+  BITCOIN_TX_TIMEOUT: Type.Integer({ default: 20_000 }),
 });
 type Env = Static<typeof schema>;
 
