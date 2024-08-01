@@ -1,0 +1,74 @@
+name: run-regtest-tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_commit:
+        description: 'regtest-env config `STACKS_BLOCKCHAIN_COMMIT` (defaults to `develop`)'
+        required: false
+        default: 'develop'
+        type: string
+      regtest_env_commit:
+        description: 'regtest-env commit (defaults to `feat/signer`)'
+        required: false
+        default: 'feat/signer'
+        type: string
+  pull_request:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }} + ${{ github.event.inputs.core_commit }} + ${{ github.event.inputs.regtest_env_commit }}'
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      - name: Create buildx builder
+        run: docker buildx create --use
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache regtest-env
+        uses: actions/cache@v3
+        id: cache-regtest-env
+        with:
+          path: /tmp/regtest-env
+          key: ${{ runner.os }}-regtest-env
+
+      - name: Clone or update regtest-env
+        run: |
+          if [ ! -d "/tmp/regtest-env" ]; then
+            git clone https://github.com/hirosystems/stacks-regtest-env.git /tmp/regtest-env
+          fi
+          cd /tmp/regtest-env
+          git fetch origin
+          git checkout ${{ github.event.inputs.regtest_env_commit || 'feat/signer' }}
+          git pull origin ${{ github.event.inputs.regtest_env_commit || 'feat/signer' }}
+
+      - name: Prepare regtest-env
+        run: |
+          cd /tmp/regtest-env
+          sed -i 's/\(&STACKS_BLOCKCHAIN_COMMIT \).*/\1${{ github.event.inputs.core_commit || 'develop' }}/' docker-compose.yml
+          sed -i 's/\(&MINE_INTERVAL_EPOCH25 \).*/\12s/' docker-compose.yml
+          sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\17s/' docker-compose.yml
+          sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\13s/' docker-compose.yml
+          docker compose build
+
+      - name: Run regtest tests
+        run: npx jest --runInBand -t 'regtest-env pox-4 stack-stx \(in reward-phase\)'
+        env:
+          NETWORK_UP_CMD: cd /tmp/regtest-env && docker compose down --volumes --remove-orphans --timeout=1 --rmi=all && docker compose up --build -d
+          NETWORK_DOWN_CMD: cd /tmp/regtest-env && docker compose down --volumes --remove-orphans --timeout=1

@@ -19,6 +19,7 @@ import {
   getAddressFromPrivateKey,
   getPublicKey,
 } from '@stacks/transactions';
+import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
 import { ENV } from './env';
 import { withRetry, withTimeout } from './utils';
 
@@ -30,16 +31,6 @@ export function newSocketClient(): StacksApiSocketClient {
 }
 
 export function stacksNetwork(): StacksNetwork {
-  const url = ENV.STACKS_NODE;
-  switch (ENV.STACKS_CHAIN) {
-    case 'mainnet':
-      return new StacksMainnet({ url });
-    case 'testnet':
-      return new StacksTestnet({ url });
-  }
-}
-
-export function stacksNetworkApi(): StacksNetwork {
   const url = ENV.STACKS_API;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
@@ -86,16 +77,19 @@ export function isInPreparePhase(blockHeight: number, poxInfo: PoxInfo): boolean
   // return pos === 0 || pos > poxInfo.reward_cycle_length - poxInfo.prepare_phase_block_length;
 }
 
-export async function getNextNonce(fromStacksNode: boolean = true): Promise<number> {
+export async function getNextNonce(
+  address: string,
+  fromStacksNode: boolean = true
+): Promise<number> {
   const config = new Configuration({
     basePath: ENV.STACKS_API,
   });
   const api = new AccountsApi(config);
   if (fromStacksNode) {
-    const result = await api.getAccountInfo({ principal: ENV.SENDER_STX_ADDRESS });
+    const result = await api.getAccountInfo({ principal: address });
     return result.nonce;
   } else {
-    const result = await api.getAccountNonces({ principal: ENV.SENDER_STX_ADDRESS });
+    const result = await api.getAccountNonces({ principal: address });
     return result.possible_next_nonce;
   }
 }
@@ -180,8 +174,19 @@ export async function getPox4Events() {
   );
 }
 
+async function getInfoStatus() {
+  const config = new Configuration({
+    basePath: ENV.STACKS_API,
+  });
+  const api = new InfoApi(config);
+  return await Promise.race([
+    api.getStatus(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ENV.RETRY_INTERVAL)),
+  ]);
+}
+
 export function getAccount(key: string) {
-  const network = stacksNetworkApi();
+  const network = stacksNetwork();
   const address = getAddressFromPrivateKey(
     key,
     network.isMainnet() ? TransactionVersion.Mainnet : TransactionVersion.Testnet
@@ -200,19 +205,19 @@ export function getAccount(key: string) {
   };
 }
 
-async function getInfoStatus() {
-  const config = new Configuration({
-    basePath: ENV.STACKS_API,
+export async function getWalletAccounts(seed: string) {
+  const wallet = await generateWallet({
+    secretKey: seed,
+    password: '',
   });
-  const api = new InfoApi(config);
-  return await Promise.race([
-    api.getStatus(),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ENV.RETRY_INTERVAL)),
-  ]);
+  const accounts = Array.from({ length: 10 })
+    .reduce((acc: Wallet) => generateNewAccount(acc), wallet)
+    .accounts.map(a => getAccount(a.stxPrivateKey));
+  return accounts;
 }
 
-export async function waitForNode() {
-  console.log('waiting for node...');
+export async function waitForNetwork() {
+  console.log('waiting for network...');
   await withRetry(1_000, getInfoStatus)();
 }
 
@@ -255,13 +260,14 @@ export async function waitForRewardPhase(poxInfo: PoxInfo) {
  * @param interval - How often to poll the node
  */
 export async function waitForNextNonce(
+  address: string,
   currentNonce: number,
   interval: number = ENV.POLL_INTERVAL
 ): Promise<void> {
   let next: number = currentNonce;
   while (next != currentNonce + 1) {
     await timeout(interval);
-    next = await getNextNonce();
+    next = await getNextNonce(address);
   }
 }
 
@@ -270,11 +276,29 @@ export async function waitForBurnBlockHeight(
   burnBlockHeight: number,
   interval: number = ENV.POLL_INTERVAL
 ): Promise<void> {
-  let height: number = -1;
-  while (height < burnBlockHeight) {
+  await timeout(100); // let the env catch up
+
+  let lastHeight = -1;
+  let lastHeightTime = Date.now();
+
+  while (true) {
+    const currentHeight = await getBurnBlockHeight();
+
+    if (currentHeight >= burnBlockHeight) break;
+
+    if (currentHeight === lastHeight) {
+      if (Date.now() - lastHeightTime > ENV.BITCOIN_TX_TIMEOUT) {
+        throw new Error(
+          `Burn block height hasn't changed for ${ENV.BITCOIN_TX_TIMEOUT} milliseconds`
+        );
+      }
+    } else {
+      lastHeight = currentHeight;
+      lastHeightTime = Date.now();
+      console.log(`waiting for burn block ${burnBlockHeight} (current ${currentHeight})`);
+    }
+
     await timeout(interval);
-    height = await getBurnBlockHeight();
-    console.log('waiting', height, '<', burnBlockHeight);
   }
 }
 

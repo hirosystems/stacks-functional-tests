@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:regtest": "jest --runInBand --testNamePattern='regtest'"
   },
   "author": "",
   "license": "Apache-2.0",
@@ -38,7 +39,7 @@
     "@stacks/network": "^6.13.0",
     "@stacks/stacking": "^6.13.0",
     "@stacks/transactions": "^6.13.0",
-    "@stacks/wallet-sdk": "^6.13.0",
+    "@stacks/wallet-sdk": "^6.16.1",
     "@types/node": "^20.11.5",
     "env-schema": "^5.2.1"
   }

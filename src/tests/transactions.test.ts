@@ -1,40 +1,39 @@
 import { makeContractDeploy, makeSTXTokenTransfer } from '@stacks/transactions';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ENV } from '../env';
 import {
   broadcastAndWaitForTransaction,
+  getAccount,
   getNextNonce,
   stacksNetwork,
   waitForNextNonce,
 } from '../helpers';
-import { StacksNetwork } from '@stacks/network';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
 
 describe('Stacks transactions', () => {
-  let network: StacksNetwork;
+  const SENDER = getAccount(ENV.PRIVATE_KEYS[0]).key;
+  const RECEIVER = getAccount(ENV.PRIVATE_KEYS[1]).address;
+
+  const network = stacksNetwork();
   let nextNonce: number;
 
-  beforeAll(() => {
-    network = stacksNetwork();
-  });
-
   beforeEach(async () => {
-    nextNonce = await getNextNonce();
+    nextNonce = await getNextNonce(SENDER);
   });
 
   afterEach(async () => {
-    await waitForNextNonce(nextNonce);
+    await waitForNextNonce(SENDER, nextNonce);
   });
 
   test('STX transfer', async () => {
     const tx = await makeSTXTokenTransfer({
       network,
       nonce: nextNonce,
-      recipient: ENV.RECEIVER_STX_ADDRESS,
+      recipient: RECEIVER,
       amount: 10_000,
       anchorMode: 'any',
-      senderKey: ENV.SENDER_KEY,
+      senderKey: SENDER,
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
@@ -48,7 +47,7 @@ describe('Stacks transactions', () => {
       contractName: `counter-${crypto.randomBytes(3).toString('hex')}`,
       codeBody,
       anchorMode: 'any',
-      senderKey: ENV.SENDER_KEY,
+      senderKey: SENDER,
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
@@ -65,7 +64,7 @@ describe('Stacks transactions', () => {
       contractName: `test-ft-${crypto.randomBytes(3).toString('hex')}`,
       codeBody,
       anchorMode: 'any',
-      senderKey: ENV.SENDER_KEY,
+      senderKey: SENDER,
     });
     const result = await broadcastAndWaitForTransaction(tx, network);
     expect(result.tx_status).toBe('success');
