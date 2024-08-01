@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run:
+  run-regtest-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,15 +56,16 @@ jobs:
           sed -i 's/\(&MINE_INTERVAL_EPOCH25 \).*/\12s/' docker-compose.yml
           sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\17s/' docker-compose.yml
           sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\13s/' docker-compose.yml
+          docker compose build
 
-      - name: Build regtest-env
-        uses: docker/build-push-action@v4
-        with:
-          context: /tmp/regtest-env
-          push: false
-          tags: hirosystems/stacks-regtest-env:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # - name: Build regtest-env
+      #   uses: docker/build-push-action@v4
+      #   with:
+      #     context: /tmp/regtest-env
+      #     push: false
+      #     tags: hirosystems/stacks-regtest-env:latest
+      #     cache-from: type=gha
+      #     cache-to: type=gha,mode=max
 
       - name: Run regtest tests
         run: npx jest --runInBand -t 'regtest-env pox-4 stack-stx \(in reward-phase\)'
