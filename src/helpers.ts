@@ -276,21 +276,20 @@ export async function waitForBurnBlockHeight(
   burnBlockHeight: number,
   interval: number = ENV.POLL_INTERVAL
 ): Promise<void> {
-  await timeout(100); // let the env catch up
-
   let lastHeight = -1;
   let lastHeightTime = Date.now();
 
   while (true) {
     const currentHeight = await getBurnBlockHeight();
 
-    if (currentHeight >= burnBlockHeight) break;
+    if (currentHeight >= burnBlockHeight) {
+      console.log(`block height ${currentHeight} (reached)`);
+      break;
+    }
 
     if (currentHeight === lastHeight) {
       if (Date.now() - lastHeightTime > ENV.BITCOIN_TX_TIMEOUT) {
-        throw new Error(
-          `Burn block height hasn't changed for ${ENV.BITCOIN_TX_TIMEOUT / 1000} seconds`
-        );
+        throw `Burn block height hasn't changed for ${ENV.BITCOIN_TX_TIMEOUT / 1000} seconds`;
       }
     } else {
       lastHeight = currentHeight;
