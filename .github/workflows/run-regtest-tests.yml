@@ -28,15 +28,6 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-      - uses: docker/setup-buildx-action@v3
-      - uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-      - name: Create buildx builder
-        run: docker buildx create --use
 
       - name: Install dependencies
         run: npm ci
@@ -48,7 +39,7 @@ jobs:
           path: /tmp/regtest-env
           key: ${{ runner.os }}-regtest-env
 
-      - name: Clone or update regtest-env
+      - name: Clone regtest-env
         run: |
           if [ ! -d "/tmp/regtest-env" ]; then
             git clone https://github.com/hirosystems/stacks-regtest-env.git /tmp/regtest-env
@@ -65,7 +56,15 @@ jobs:
           sed -i 's/\(&MINE_INTERVAL_EPOCH25 \).*/\12s/' docker-compose.yml
           sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\17s/' docker-compose.yml
           sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\13s/' docker-compose.yml
-          docker compose build
+
+      - name: Build regtest-env
+        uses: docker/build-push-action@v4
+        with:
+          context: /tmp/regtest-env
+          push: false
+          tags: hirosystems/stacks-regtest-env:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run regtest tests
         run: npx jest --runInBand -t 'regtest-env pox-4 stack-stx \(in reward-phase\)'
