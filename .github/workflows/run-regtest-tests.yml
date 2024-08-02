@@ -54,8 +54,8 @@ jobs:
           cd /tmp/regtest-env
           sed -i 's/\(&STACKS_BLOCKCHAIN_COMMIT \).*/\1${{ github.event.inputs.core_commit || 'develop' }}/' docker-compose.yml
           sed -i 's/\(&MINE_INTERVAL_EPOCH25 \).*/\12s/' docker-compose.yml
-          sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\17s/' docker-compose.yml
-          sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\13s/' docker-compose.yml
+          sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\16s/' docker-compose.yml
+          sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\14s/' docker-compose.yml
           docker compose build
           cat << EOF >> stacks-krypton-miner.toml
           # DEVNET WALLETS

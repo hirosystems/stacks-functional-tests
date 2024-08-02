@@ -139,7 +139,6 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
-    await timeout(400);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
@@ -217,10 +216,9 @@ describe('regtest-env pox-4', () => {
       .map(r => r.data)
       .filter(d => d.signer_key.includes(signer.signerPublicKey));
 
-    // todo: this is incorrect on the stacks-node side currently, it shouldn't have the prepare offset included yet
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
