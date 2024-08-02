@@ -39,6 +39,20 @@ jobs:
           path: /tmp/regtest-env
           key: ${{ runner.os }}-regtest-env
 
+      - name: Determine core commit SHA
+        id: core-commit
+        run: |
+          core_commit=${{ github.event.inputs.core_commit || 'develop' }}
+          if git ls-remote --exit-code --heads https://github.com/stacks-network/stacks-core.git $core_commit; then
+            core_commit_sha=$(git ls-remote https://github.com/stacks-network/stacks-core.git $core_commit | awk '{print $1}')
+          elif git ls-remote --exit-code --refs https://github.com/stacks-network/stacks-core.git $core_commit; then
+            core_commit_sha=$core_commit
+          else
+            echo "Invalid core_commit: $core_commit"
+            exit 1
+          fi
+          echo "::set-output name=sha::$core_commit_sha"
+
       - name: Clone regtest-env
         run: |
           if [ ! -d "/tmp/regtest-env" ]; then
@@ -52,7 +66,7 @@ jobs:
       - name: Prepare regtest-env
         run: |
           cd /tmp/regtest-env
-          sed -i 's/\(&STACKS_BLOCKCHAIN_COMMIT \).*/\1${{ github.event.inputs.core_commit || 'develop' }}/' docker-compose.yml
+          sed -i 's/\(&STACKS_BLOCKCHAIN_COMMIT \).*/\1${{ steps.core-commit.outputs.sha }}/' docker-compose.yml
           sed -i 's/\(&MINE_INTERVAL_EPOCH25 \).*/\12s/' docker-compose.yml
           sed -i 's/\(&MINE_INTERVAL_EPOCH3 \).*/\16s/' docker-compose.yml
           sed -i 's/\(&&NAKAMOTO_BLOCK_INTERVAL \).*/\14s/' docker-compose.yml
