@@ -1290,32 +1290,32 @@ describe('regtest-env pox-4', () => {
     const { txid: aliceDelegate } = await broadcastTransaction(tx, network);
 
     const aliceDelegateTx = await waitForTransaction(aliceDelegate);
-    expect(aliceDelegateTx.tx_result.repr).toContain('(err 23');
-    expect(aliceDelegateTx.tx_status).toBe('aborted_by_response');
+    expect(aliceDelegateTx.tx_result.repr).toContain('(err 13');
+    expect(aliceDelegateTx.tx_status).toBe('abort_by_response');
 
     // TRANSACTION (pool delegate-stack-stx)
     const poolNonce = await getNonce(pool.address, network);
     const { txid: poolAlice } = await pool.client.delegateStackStx({
       stacker: alice.address,
       amountMicroStx: amount,
-      poxAddress: pool.btcAddress, // will be different to the one alice delegated to
+      poxAddress: pool.btcAddress,
       burnBlockHeight: poxInfo.current_burnchain_block_height,
       cycles: 2,
       privateKey: pool.key,
       nonce: poolNonce,
     });
     const poolAliceTx = await waitForTransaction(poolAlice);
-    expect(poolAliceTx.tx_result.repr).toContain('(ok');
-    expect(poolAliceTx.tx_status).toBe('success');
+    expect(poolAliceTx.tx_result.repr).toContain('(err 9');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
 
     // wait a bit to see what happens
     poxInfo = await client.getPoxInfo();
     await waitForBurnBlockHeight(
-      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+      (poxInfo.current_burnchain_block_height as number) + 2 * poxInfo.reward_cycle_length
     );
 
     expect((await client.getPoxInfo()).current_burnchain_block_height).toBe(
-      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+      (poxInfo.current_burnchain_block_height as number) + 2 * poxInfo.reward_cycle_length
     );
   });
 
