@@ -247,7 +247,6 @@ describe('regtest-env pox-4', () => {
 
     // ENSURE REWARDS
     const reward = (await getRewards(steph.btcAddress))[0];
-    await timeout(1000);
     expect(reward).toBeDefined();
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
   });
@@ -345,6 +344,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(1000);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
@@ -489,6 +489,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -638,6 +639,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -778,6 +780,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -922,6 +925,7 @@ describe('regtest-env pox-4', () => {
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -1104,6 +1108,7 @@ describe('regtest-env pox-4', () => {
       })
     );
 
+    await timeout(1000);
     const rewardSet = await pool.client.getRewardSet({
       contractId: poxInfo.contract_id,
       rewardCyleId: nextCycle,
@@ -1226,6 +1231,7 @@ describe('regtest-env pox-4', () => {
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
 
+    await timeout(1000);
     const rewardSet = await pool.client.getRewardSet({
       contractId: poxInfo.contract_id,
       rewardCyleId: nextCycle,
