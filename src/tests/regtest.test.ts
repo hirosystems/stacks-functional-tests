@@ -43,7 +43,7 @@ describe('regtest-env pox-4', () => {
   });
 
   afterEach(async () => {
-    // await networkEnvDown();
+    await networkEnvDown();
   });
 
   test('stack-stx (in reward-phase)', async () => {

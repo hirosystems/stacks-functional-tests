@@ -113,7 +113,7 @@ jobs:
       #     cache-to: type=gha,mode=max
 
       - name: Run regtest tests
-        run: npx jest --runInBand -t 'regtest-env pox-4 stack-stx \(in reward-phase\)'
+        run: npx jest --runInBand -t 'regtest-env pox-4'
         env:
           NETWORK_UP_CMD: cd /tmp/regtest-env && docker compose down --volumes --remove-orphans --timeout=1 --rmi=all && docker compose up --build -d
           NETWORK_DOWN_CMD: cd /tmp/regtest-env && docker compose down --volumes --remove-orphans --timeout=1

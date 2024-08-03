@@ -13,6 +13,8 @@ import {
 } from '../helpers';
 import { networkEnvUp, networkEnvDown, withRetry } from '../utils';
 
+jest.setTimeout(1_000_000_000);
+
 describe('regtest-env pox-4 caller', () => {
   const network = new StacksDevnet({ fetchFn: withRetry(3, fetch) }); // this test only works on regtest-env
 
