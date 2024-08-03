@@ -97,6 +97,10 @@ jobs:
           address = "ST3AM1A56AK2C1XAFJ4115ZSV26EB49BVQ10MGCS0"
           amount = 10000000000000000
           # secretKey = 7036b29cb5e235e5fd9b09ae3e8eec4404e44906814d5d01cbca968a60ed4bfb01
+          [[ustx_balance]]
+          address = "ST3PF13W7Z0RRM42A8VZRVFQ75SV1K26RXEP8YGKJ"
+          amount = 10000000000000000
+          # secretKey = b463f0df6c05d2f156393eee73f8016c5372caa0e9e29a901bb7171d90dc4f1401
           EOF
 
       # - name: Build regtest-env
