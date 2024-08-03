@@ -43,6 +43,25 @@ export function withTimeout<T, A extends any[]>(
   };
 }
 
+export async function networkEnvUp() {
+  if (!ENV.NETWORK_UP_CMD) return;
+
+  console.log('starting network...');
+  const out = await x(ENV.NETWORK_UP_CMD);
+  // if (out.stderr) throw new Error(out.stderr);
+  return out.stdout;
+}
+
+export async function networkEnvDown() {
+  if (!ENV.NETWORK_DOWN_CMD) return;
+
+  console.log('stopping network...');
+  const out = await x(ENV.NETWORK_DOWN_CMD);
+  // if (out.stderr) throw new Error(out.stderr);
+  return out.stdout;
+}
+
+/** WIP */
 export async function storeEventsTsv(suffix: string = '') {
   let testname = expect.getState().currentTestName ?? '';
   testname = testname
@@ -66,19 +85,5 @@ export async function storeEventsTsv(suffix: string = '') {
       ${filename}`
   );
   if (out.stderr) throw new Error(out.stderr);
-  return out.stdout;
-}
-
-export async function startRegtestEnv() {
-  console.log('starting regtest-env...');
-  const out = await x(ENV.REGTEST_UP_CMD);
-  // if (out.stderr) throw new Error(out.stderr);
-  return out.stdout;
-}
-
-export async function stopRegtestEnv() {
-  console.log('stopping regtest-env...');
-  const out = await x(ENV.REGTEST_DOWN_CMD);
-  // if (out.stderr) throw new Error(out.stderr);
   return out.stdout;
 }

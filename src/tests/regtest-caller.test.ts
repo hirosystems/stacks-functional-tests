@@ -8,10 +8,10 @@ import {
   broadcastAndWaitForTransaction,
   getAccount,
   waitForBurnBlockHeight,
-  waitForNode,
+  waitForNetwork,
   waitForTransaction,
 } from '../helpers';
-import { startRegtestEnv, stopRegtestEnv, withRetry } from '../utils';
+import { networkEnvUp, networkEnvDown, withRetry } from '../utils';
 
 jest.setTimeout(1_000_000_000);
 
@@ -21,14 +21,14 @@ describe('regtest-env pox-4 caller', () => {
   let poxInfo: PoxInfo;
   let client: StackingClient;
 
-  const pool = getAccount(ENV.REGTEST_KEYS[0]) as ReturnType<typeof getAccount> & {
+  const pool = getAccount(ENV.PRIVATE_KEYS[0]) as ReturnType<typeof getAccount> & {
     wrappedClient: StackingClient;
   };
 
   beforeEach(async () => {
     // SETUP
-    await startRegtestEnv();
-    await waitForNode();
+    await networkEnvUp();
+    await waitForNetwork();
 
     // POX-4 PREP
     client = new StackingClient('', network);
@@ -63,7 +63,7 @@ describe('regtest-env pox-4 caller', () => {
   });
 
   afterEach(async () => {
-    await stopRegtestEnv();
+    await networkEnvDown();
   });
 
   async function deployWrapperContract() {
@@ -99,7 +99,7 @@ describe('regtest-env pox-4 caller', () => {
     // alice tries to use the pool as a caller
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[1]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[1]);
 
     const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
 
@@ -176,7 +176,7 @@ describe('regtest-env pox-4 caller', () => {
   });
 
   describe('caller', () => {
-    const alice = getAccount(ENV.REGTEST_KEYS[1]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[1]);
 
     test('Allowed contract cannot remove permission', async () => {
       // TEST CASE
@@ -220,7 +220,7 @@ describe('regtest-env pox-4 caller', () => {
       // alice tries to disallow pool via a caller (via wrapper contract)
       // the transaction should fail
 
-      const bob = getAccount(ENV.REGTEST_KEYS[2]);
+      const bob = getAccount(ENV.PRIVATE_KEYS[2]);
 
       // TRANSACTION (alice allow-contract-caller)
       const [contractAddress, contractName] = client.parseContractId(poxInfo.contract_id);
@@ -370,7 +370,7 @@ describe('regtest-env pox-4 caller', () => {
       // alice revoke-delegate-stx (via wrapper contract)
       // the transaction should fail
 
-      const bob = getAccount(ENV.REGTEST_KEYS[2]);
+      const bob = getAccount(ENV.PRIVATE_KEYS[2]);
 
       // TRANSACTION (alice allow-contract-caller)
       const [contractAddress, contractName] = client.parseContractId(poxInfo.contract_id);
