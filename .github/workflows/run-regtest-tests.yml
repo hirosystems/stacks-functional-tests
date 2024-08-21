@@ -42,7 +42,7 @@ jobs:
       - name: Determine core commit SHA
         id: core-commit
         run: |
-          core_commit=${{ github.event.inputs.core_commit || 'develop' }}
+          core_commit=${{ github.event.inputs.core_commit || 'fix/multi-miner-fixes-jude' }}
           if git ls-remote --exit-code --heads https://github.com/stacks-network/stacks-core.git $core_commit; then
             core_commit_sha=$(git ls-remote https://github.com/stacks-network/stacks-core.git $core_commit | awk '{print $1}')
           elif git ls-remote --exit-code --refs https://github.com/stacks-network/stacks-core.git $core_commit; then
