@@ -43,6 +43,12 @@ const schema = Type.Object({
   NETWORK_DOWN_CMD: Type.String({ default: "echo 'no-op'" }),
 
   /**
+   * *Only relevant for regtest env network*
+   * Directory where regtest-env docker compose files are located
+   */
+  REGTEST_WORKING_DIR: Type.String({ default: '' }),
+
+  /**
    * If true, doesn't wait for unlock and verifying rewards in regtest tests.
    * Useful for speeding up tests when running many long-running regtest-env tests
    */

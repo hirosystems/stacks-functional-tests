@@ -15,7 +15,16 @@ export function withRetry<T, A extends any[]>(
     let attempts = 0;
     while (true) {
       try {
-        return await fn(...args);
+        const response = await fn(...args);
+
+        if (response instanceof Response && !response.ok) {
+          console.log(`(retry) status: ${response.status} (${attempts}/${maxRetries})`);
+          await timeout(ENV.RETRY_INTERVAL);
+          attempts++;
+          continue;
+        }
+
+        return response as T;
       } catch (err: any) {
         if (err.status !== 502 && attempts >= maxRetries) throw err; // ignore Bad Gateway errors
         await timeout(ENV.RETRY_INTERVAL);
@@ -58,6 +67,24 @@ export async function networkEnvDown() {
   console.log('stopping network...');
   const out = await x(ENV.NETWORK_DOWN_CMD);
   // if (out.stderr) throw new Error(out.stderr);
+  return out.stdout;
+}
+
+export async function regtestComposeUp(name?: string, opts?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`starting regtest services... ${name}`);
+  const out = await x(
+    `cd ${ENV.REGTEST_WORKING_DIR} && docker compose ${opts ? opts : ''} up -d ${name}`
+  );
+  return out.stdout;
+}
+
+export async function regtestComposeDown(name?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`stopping regtest services... ${name}`);
+  const out = await x(`cd ${ENV.REGTEST_WORKING_DIR} && docker compose down ${name}`);
   return out.stdout;
 }
 

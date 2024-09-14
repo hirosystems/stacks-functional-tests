@@ -1,7 +1,10 @@
+import RpcClient from '@btc-helpers/rpc';
 import { logger, timeout, waiter } from '@hirosystems/api-toolkit';
+import * as btc from '@scure/btc-signer';
 import { NETWORK, TEST_NETWORK, getAddress } from '@scure/btc-signer';
 import {
   AccountsApi,
+  BlocksApi,
   Configuration,
   InfoApi,
   StackingRewardsApi,
@@ -20,6 +23,7 @@ import {
   getPublicKey,
 } from '@stacks/transactions';
 import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
+import { Toxiproxy } from 'toxiproxy-node-client';
 import { ENV } from './env';
 import { withRetry, withTimeout } from './utils';
 
@@ -34,9 +38,9 @@ export function stacksNetwork(): StacksNetwork {
   const url = ENV.STACKS_API;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
-      return new StacksMainnet({ url });
+      return new StacksMainnet({ url, fetchFn: withRetry(5, fetch) });
     case 'testnet':
-      return new StacksTestnet({ url });
+      return new StacksTestnet({ url, fetchFn: withRetry(5, fetch) });
   }
 }
 
@@ -94,6 +98,15 @@ export async function getNextNonce(
   }
 }
 
+export async function getStacksBlockHeight() {
+  const config = new Configuration({
+    basePath: ENV.STACKS_API,
+  });
+  const api = new InfoApi(config);
+  const result = await api.getCoreApiInfo();
+  return result.stacks_tip_height;
+}
+
 export async function getRewards(btcAddress: string) {
   const config = new Configuration({
     basePath: ENV.STACKS_API,
@@ -141,6 +154,16 @@ export async function getTransactions(address: string) {
   } catch (error) {
     return null;
   }
+}
+
+export async function getStacksBlock(blockHeight: number) {
+  const config = new Configuration({
+    basePath: ENV.STACKS_API,
+  });
+  const api = new BlocksApi(config);
+  return await api.getBlockByHeight({
+    height: blockHeight,
+  });
 }
 
 export async function getPox4Events() {
@@ -358,3 +381,48 @@ export const waitForTransaction = withTimeout(
     }
   }
 );
+
+// TOXI PROXY ==================================================================
+const proxyClient = new Toxiproxy('http://localhost:8474');
+
+type ProxyName =
+  | 'stacks-node'
+  | 'stacks-api'
+  | 'stacks-signer-1'
+  | 'stacks-signer-2'
+  | 'stacks-signer-3';
+
+export async function getProxies() {
+  return await proxyClient.getAll();
+}
+
+export async function getProxy(name: ProxyName) {
+  return await proxyClient.get(name);
+}
+
+export async function pauseProxy(name: ProxyName) {
+  const proxy = await proxyClient.get(name);
+  await proxy.update({ enabled: false, listen: proxy.listen, upstream: proxy.upstream });
+  return proxy;
+}
+
+export async function resumeProxy(name: ProxyName) {
+  const proxy = await proxyClient.get(name);
+  await proxy.update({ enabled: true, listen: proxy.listen, upstream: proxy.upstream });
+  return proxy;
+}
+// =============================================================================
+
+// BITCOIND RPC ================================================================
+export const bitcoindClient = new RpcClient('http://btc:btc@localhost:18443').Typed;
+
+export function getPubKeyHashFromTx(tx: string) {
+  const transaction = btc.Transaction.fromRaw(hexToBytes(tx), {
+    allowUnknownOutputs: true,
+  });
+  const input = transaction.getInput(0);
+  if (!input.finalScriptSig) throw 'unexpected type';
+  const decodedScript = btc.Script.decode(input.finalScriptSig);
+  return bytesToHex(decodedScript[1] as Uint8Array);
+}
+// =============================================================================

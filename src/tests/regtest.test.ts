@@ -1,5 +1,6 @@
+import * as btc from '@scure/btc-signer';
 import { timeout } from '@hirosystems/api-toolkit';
-import { bytesToHex } from '@stacks/common';
+import { bytesToHex, hexToBytes } from '@stacks/common';
 import { StacksDevnet } from '@stacks/network';
 import { PoxInfo, StackingClient, poxAddressToTuple } from '@stacks/stacking';
 import {
@@ -12,16 +13,27 @@ import {
   callReadOnlyFunction,
   getNonce,
   makeContractCall,
+  makeRandomPrivKey,
 } from '@stacks/transactions';
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
+  bitcoindClient,
   broadcastAndWaitForTransaction,
   burnHeightToRewardCycle,
   getAccount,
   getPox4Events,
+  getProxies,
+  getProxy,
+  getPubKeyHashFromTx,
   getRewards,
+  getStacksBlock,
+  getStacksBlockHeight,
+  getWalletAccounts,
   isInPreparePhase,
+  pauseProxy,
+  resumeProxy,
+  stacksNetwork,
   waitForBurnBlockHeight,
   waitForNetwork,
   waitForNextCycle,
@@ -29,12 +41,13 @@ import {
   waitForRewardPhase,
   waitForTransaction,
 } from '../helpers';
-import { networkEnvDown, networkEnvUp, withRetry } from '../utils';
+import { networkEnvDown, networkEnvUp, regtestComposeDown, regtestComposeUp } from '../utils';
+import { generateSecretKey } from '@stacks/wallet-sdk';
 
 jest.setTimeout(1_000_000_000);
 
 describe('regtest-env pox-4', () => {
-  const network = new StacksDevnet({ fetchFn: withRetry(3, fetch) }); // this test only works on regtest-env
+  const network = stacksNetwork();
   let poxInfo: PoxInfo;
 
   beforeEach(async () => {
@@ -46,6 +59,39 @@ describe('regtest-env pox-4', () => {
     await networkEnvDown();
   });
 
+  test('regtest compose up', async () => {
+    await waitForBurnBlockHeight(112);
+
+    console.log(await regtestComposeDown('stacker'));
+    console.log(await regtestComposeUp('stacker', '--env-file .env-signers-5'));
+    console.log(await regtestComposeUp('stacks-signer-4'));
+    console.log(await regtestComposeUp('stacks-signer-5'));
+  });
+
+  test('multiple miners are active', async () => {
+    // PREP
+    await waitForBurnBlockHeight(109);
+
+    const height = await getStacksBlockHeight();
+    const range = Array.from({ length: height - 1 }, (_, i) => i + 1);
+    console.log('height', height, 'range', range.length);
+
+    const pubKeyHashes = await Promise.all(
+      range.map(async height => {
+        const block = await getStacksBlock(height);
+        const tx = await bitcoindClient.getrawtransaction({
+          txid: block.miner_txid.replace('0x', ''),
+        });
+        return getPubKeyHashFromTx(tx as string);
+      })
+    );
+
+    expect(range.length).toBeGreaterThan(0);
+    expect(pubKeyHashes.length).toBeGreaterThan(0);
+
+    expect(new Set(pubKeyHashes).size).toBe(2);
+  });
+
   test('stack-stx (in reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
@@ -54,7 +100,7 @@ describe('regtest-env pox-4', () => {
     const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
-    const client = new StackingClient(steph.address, network);
+    const client = steph.client;
 
     poxInfo = await client.getPoxInfo();
     const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
@@ -2918,3 +2964,42 @@ describe('regtest-env pox-4', () => {
     expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
   });
 });
+
+// TEST RESULTS
+// ✓ stack-stx (in reward-phase) (123537 ms)
+// ✕ stack-stx (before prepare-phase) (123256 ms)
+// ✓ stack-stx (in prepare-phase) (123064 ms)
+// ✓ stack-stx (reward-phase), stack-extend (reward-phase) (365162 ms)
+// ✕ stack-stx (reward-phase), stack-extend (prepare-phase) (19923 ms)
+// ✓ stack-stx (reward-phase), stack-increase (reward-phase) (243676 ms)
+// ✓ stack-stx (reward-phase), stack-increase (prepare-phase) (243412 ms)
+// ✓ pool: delegate-stack, agg-increase (prepare-phase) (40334 ms)
+// ✓ pool: delegate with invalid hashbyte length (170470 ms)
+// ✓ Pool delegate can only delegate-stack-stx for the next cycle (19828 ms)
+// ✓ Cannot stack if delegating (21049 ms)
+// ✓ Pool delegate cannot delegate-stack-stx if already stacking (23140 ms)
+// ✕ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (17846 ms)
+// ✕ Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool (29372 ms)
+// ✓ Pool delegate cannot delegate-stack-stx for the current cycle (20974 ms)
+// ✓ Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker (19867 ms)
+// ✓ Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle (41371 ms)
+// ✓ Pool can pre-approve a signature for participants (27102 ms)
+// ✓ Stacker switches signers for stack-increase (23161 ms)
+// ✓ Stacker switches signers for stack-extend (26043 ms)
+// ✓ Call readonly with weird string (29614 ms)
+// ✓ Pool stacker can delegate-stx, Pool stacker cannot submit an invalid pox-addr-version (22230 ms)
+// ✓ Pool stacker cannot delegate to two pool operators at once (26241 ms)
+// ✓ Revoke fails if stacker is not currently delegated (21010 ms)
+// ✕ Pool delegate can successfully provide a stacking lock for a pool stacker (delegate-stack-stx) (64394 ms)
+// ✓ Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker (24058 ms)
+// ✓ Pool delegate cannot delegate-stack-stx for the current cycle (24927 ms)
+// ✓ Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool (26177 ms)
+// ✓ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (25009 ms)
+// ✓ Pool delegate cannot change the pox-addr provided by delegator (23368 ms)
+// ✓ Pool delegate cannot delegate-stack-stx if the delegation expires before the next cycle ends (23080 ms)
+// ✓ Pool delegate-stack-stx fails if the delegator has insufficient balance (21896 ms)
+// ✓ Pool delegate cannot delegate-stack 0 stx, Pool delegate cannot delegate-stack-stx for 0 cycles, Pool delegate cannot delegate-stack-stx for > 12 cycles (30107 ms)
+// ✓ Pool delegate cannot submit an invalid pox-addr-ver (22129 ms)
+// ✓ Pool stacker can revoke delegate status (revoke-delegate-stx) (27076 ms)
+// ✓ Pool delegate can successfully delegate-stack-extend (26345 ms)
+// ○ skipped pool: agg increase over maxAmount
