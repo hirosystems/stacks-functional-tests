@@ -27,12 +27,15 @@ import {
   getProxy,
   getPubKeyHashFromTx,
   getRewards,
+  getStackerSet,
   getStacksBlock,
   getStacksBlockHeight,
+  getStacksBlockRaw,
   getWalletAccounts,
   isInPreparePhase,
   pauseProxy,
   resumeProxy,
+  rewardCycleToBurnHeight,
   stacksNetwork,
   waitForBurnBlockHeight,
   waitForNetwork,
@@ -52,6 +55,7 @@ describe('regtest-env pox-4', () => {
 
   beforeEach(async () => {
     await networkEnvUp();
+    await timeout(14000);
     await waitForNetwork();
   });
 
@@ -59,16 +63,37 @@ describe('regtest-env pox-4', () => {
     await networkEnvDown();
   });
 
-  test('regtest compose up', async () => {
-    await waitForBurnBlockHeight(112);
+  // NOTES E2E
+  // - run all existing tests
+  // - add signer rollover test
+  // - ensure multiple miners
+  // - validate signers keys from block headers (w/ Hank)
 
-    console.log(await regtestComposeDown('stacker'));
-    console.log(await regtestComposeUp('stacker', '--env-file .env-signers-5'));
-    console.log(await regtestComposeUp('stacks-signer-4'));
-    console.log(await regtestComposeUp('stacks-signer-5'));
+  const NAKAMOTO_HEIGHT = 132;
+
+  test('wip test', async () => {
+    await waitForBurnBlockHeight(NAKAMOTO_HEIGHT);
+
+    const block = await getStacksBlock();
+    console.log('stx block', block.height, block.hash);
+
+    const blockRaw = await getStacksBlockRaw(block.height);
+    console.log('stx block raw', blockRaw);
   });
 
-  test('multiple miners are active', async () => {
+  test.skip('signer rollover', async () => {
+    await waitForBurnBlockHeight(110);
+    console.log(await regtestComposeDown('stacker'));
+    console.log(await regtestComposeUp('stacker', '--env-file .env-signers-5'));
+    // cycle 5 (reward phase)
+    // stacker script should have stacked until 6
+    // shut off stackers (in cycle 5)
+    // original signers can take on cycle 6
+    // power up new stackers (in cycle 6)
+    // new stackers take on cycle 7
+  });
+
+  test.skip('multiple miners are active', async () => {
     // PREP
     await waitForBurnBlockHeight(109);
 
@@ -91,6 +116,8 @@ describe('regtest-env pox-4', () => {
 
     expect(new Set(pubKeyHashes).size).toBe(2);
   });
+
+  // STACKING
 
   test('stack-stx (in reward-phase)', async () => {
     // TEST CASE
@@ -154,6 +181,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -227,8 +255,11 @@ describe('regtest-env pox-4', () => {
     const currentCycle = poxInfo.reward_cycle_id;
     const nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 7n;
     const authId = crypto.randomBytes(1)[0];
+
+    expect(await getStackerSet(nextCycle)).toBeUndefined(); // stacker set isn't ready yet
+
     const signature = client.signPoxSignature({
       topic: 'stack-stx',
       period: lockPeriod,
@@ -255,6 +286,20 @@ describe('regtest-env pox-4', () => {
     expect(result.tx_result.repr).toContain('(ok');
     expect(result.tx_status).toBe('success');
 
+    expect(result.burn_block_height).toBe(stackHeight + 1);
+
+    poxInfo = await client.getPoxInfo();
+    expect(
+      isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)
+    ).toBeTruthy();
+    await waitForRewardPhase(poxInfo, +1);
+
+    poxInfo = await client.getPoxInfo();
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.min_amount_ustx));
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.current_cycle.min_threshold_ustx));
+    expect(poxInfo.current_cycle.id).toBe(nextCycle);
+    expect(poxInfo.current_cycle.is_pox_active).toBeTruthy();
+
     // CHECK POX-4 EVENTS
     const { results } = await getPox4Events();
     const datas = results
@@ -263,6 +308,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -272,18 +318,22 @@ describe('regtest-env pox-4', () => {
     let info = await client.getStatus();
     if (!info.stacked) throw 'not stacked';
 
-    expect(info.details.unlock_height).toBeGreaterThan(0);
-    expect(info.details.unlock_height).toBe(
+    const unlockHeight = info.details.unlock_height;
+    expect(unlockHeight).toBeGreaterThan(0);
+    expect(unlockHeight).toBe(
       stackHeight -
         (stackHeight % poxInfo.reward_cycle_length) +
         poxInfo.reward_cycle_length * (lockPeriod + 1)
     );
-    expect(burnHeightToRewardCycle(info.details.unlock_height, poxInfo)).toBe(
-      nextCycle + lockPeriod
-    ); // same as end_cycle_id
+    expect(burnHeightToRewardCycle(unlockHeight, poxInfo)).toBe(nextCycle + lockPeriod); // same as end_cycle_id
 
-    poxInfo = await client.getPoxInfo();
-    await waitForNextCycle(poxInfo);
+    console.log('cycle:', nextCycle);
+    console.log(
+      'stacked to:',
+      info.details.pox_address.version[0],
+      bytesToHex(info.details.pox_address.hashbytes),
+      steph.btcAddress
+    );
 
     if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
@@ -366,6 +416,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -460,6 +511,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -515,6 +567,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (burnHeightToRewardCycle(stackUnlock, poxInfo) + extendCycles).toString(),
       })
@@ -606,6 +659,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -756,6 +810,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -809,6 +864,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: burnHeightToRewardCycle(stackUnlock, poxInfo).toString(), // original unlock
       })
@@ -897,6 +953,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })

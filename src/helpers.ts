@@ -16,11 +16,20 @@ import { StacksMainnet, StacksNetwork, StacksTestnet } from '@stacks/network';
 import { PoxInfo, StackingClient } from '@stacks/stacking';
 import { Transaction } from '@stacks/stacks-blockchain-api-types';
 import {
+  BufferCV,
+  Cl,
+  ClarityType,
+  OptionalCV,
+  PrincipalCV,
   StacksTransaction,
+  TupleCV,
+  UIntCV,
   broadcastTransaction,
   createStacksPrivateKey,
   getAddressFromPrivateKey,
+  getContractMapEntry,
   getPublicKey,
+  isClarityType,
 } from '@stacks/transactions';
 import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
 import { Toxiproxy } from 'toxiproxy-node-client';
@@ -38,9 +47,9 @@ export function stacksNetwork(): StacksNetwork {
   const url = ENV.STACKS_API;
   switch (ENV.STACKS_CHAIN) {
     case 'mainnet':
-      return new StacksMainnet({ url, fetchFn: withRetry(5, fetch) });
+      return new StacksMainnet({ url, fetchFn: withRetry(10, fetch) });
     case 'testnet':
-      return new StacksTestnet({ url, fetchFn: withRetry(5, fetch) });
+      return new StacksTestnet({ url, fetchFn: withRetry(10, fetch) });
   }
 }
 
@@ -123,7 +132,7 @@ export async function getRewardSlots(btcAddress: string) {
   return (await api.getBurnchainRewardSlotHoldersByAddress({ address: btcAddress })).results;
 }
 
-export const getBurnBlockHeight = withRetry(3, async () => {
+export const getBurnBlockHeight = withRetry(5, async () => {
   const config = new Configuration({
     basePath: ENV.STACKS_API,
   });
@@ -156,14 +165,97 @@ export async function getTransactions(address: string) {
   }
 }
 
-export async function getStacksBlock(blockHeight: number) {
+export async function getStacksBlock(blockHeight?: number) {
   const config = new Configuration({
     basePath: ENV.STACKS_API,
+    // fetchApi: withRetry(5, fetch),
   });
   const api = new BlocksApi(config);
-  return await api.getBlockByHeight({
-    height: blockHeight,
-  });
+
+  if (blockHeight) {
+    return await api.getBlock({
+      heightOrHash: blockHeight,
+    });
+  }
+
+  return (
+    await api.getBlocks({
+      limit: 1,
+    })
+  ).results[0];
+}
+
+export async function getStacksBlockRaw(blockHeight: number) {
+  const blockInfo = await getStacksBlock(blockHeight);
+  const blockId = blockInfo.hash;
+
+  return fetch(`${ENV.STACKS_NODE}/v3/blocks/${blockId}`)
+    .then(res => res.blob())
+    .then(blob => blob.arrayBuffer())
+    .then(buffer => bytesToHex(new Uint8Array(buffer)));
+}
+
+export async function getStackerSet(cycle: number) {
+  const basePath = ENV.STACKS_NODE;
+  return (
+    await fetch(`${basePath}/v3/stacker_set/${cycle}`).then(
+      res =>
+        res.json() as Promise<{
+          stacker_set: {
+            rewarded_addresses: object[];
+            start_cycle_state: {
+              missed_reward_slots: any[];
+            };
+            signers: {
+              signing_key: string;
+              stacked_amt: number;
+              weight: number;
+            }[];
+            pox_ustx_threshold: number;
+          };
+        }>
+    )
+  ).stacker_set;
+}
+
+export async function getTentativeStackerSet(cycle: number, poxInfo: PoxInfo) {
+  const [contractAddress, contractName] = poxInfo.contract_id.split('.');
+  const lenTuple = (await getContractMapEntry({
+    contractAddress,
+    contractName,
+    mapName: 'reward-cycle-pox-address-list-len',
+    mapKey: Cl.tuple({ 'reward-cycle': Cl.uint(cycle) }),
+    network: stacksNetwork(),
+  })) as OptionalCV<TupleCV<{ len: UIntCV }>>;
+  if (isClarityType(lenTuple, ClarityType.OptionalNone)) throw 'reward entry list length is none';
+  const len = lenTuple.value.data.len.value;
+  console.log(len);
+
+  const range = Array.from({ length: Number(len) }, (_, i) => i); // range from 0 to len-1
+  const entries = await Promise.all(
+    range.map(async i => {
+      const entry = (await getContractMapEntry({
+        contractAddress,
+        contractName,
+        mapName: 'reward-cycle-pox-address-list',
+        mapKey: Cl.tuple({ 'reward-cycle': Cl.uint(cycle), index: Cl.uint(i) }),
+        network: stacksNetwork(),
+      })) as OptionalCV<
+        TupleCV<{
+          'pox-addr': TupleCV<{ version: BufferCV; hashbytes: BufferCV }>;
+          'total-ustx': UIntCV;
+          stacker: OptionalCV<PrincipalCV>;
+          signer: BufferCV;
+        }>
+      >;
+      if (isClarityType(entry, ClarityType.OptionalNone)) throw 'entry is none';
+      return Object.fromEntries(
+        Object.entries(entry.value.data).map(([key, value]) => [key, Cl.stringify(value)])
+      );
+    })
+  );
+
+  return entries;
 }
 
 export async function getPox4Events() {
@@ -252,7 +344,7 @@ export async function waitForNextCycle(poxInfo: PoxInfo) {
 
 /** Wait until we're in the neglected part of the prepare phase */
 export async function waitForPreparePhase(poxInfo: PoxInfo, diff: number = 0) {
-  if (isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
+  if (isInPreparePhase((poxInfo.current_burnchain_block_height as number) + diff, poxInfo)) return;
 
   const effectiveHeight =
     (poxInfo.current_burnchain_block_height as number) - poxInfo.first_burnchain_block_height;
@@ -263,7 +355,7 @@ export async function waitForPreparePhase(poxInfo: PoxInfo, diff: number = 0) {
   );
 }
 
-export async function waitForRewardPhase(poxInfo: PoxInfo) {
+export async function waitForRewardPhase(poxInfo: PoxInfo, diff: number = 0) {
   if (!isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)) return;
 
   const effectiveHeight =
@@ -271,7 +363,7 @@ export async function waitForRewardPhase(poxInfo: PoxInfo) {
   const pos = effectiveHeight % poxInfo.reward_cycle_length;
   const blocksUntilRewardPhase = poxInfo.reward_cycle_length - pos;
   return waitForBurnBlockHeight(
-    (poxInfo.current_burnchain_block_height as number) + blocksUntilRewardPhase
+    (poxInfo.current_burnchain_block_height as number) + blocksUntilRewardPhase + diff
   );
 }
 

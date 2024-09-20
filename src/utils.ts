@@ -18,7 +18,16 @@ export function withRetry<T, A extends any[]>(
         const response = await fn(...args);
 
         if (response instanceof Response && !response.ok) {
-          console.log(`(retry) status: ${response.status} (${attempts}/${maxRetries})`);
+          const clone = response.clone();
+
+          // Don't retry on these errors:
+          if ((await clone.text()).includes('NoEstimateAvailable')) return response as T;
+
+          console.log(
+            `(retry) status: ${clone.status} (${attempts}/${maxRetries}) ${clone.url}\n${await clone.text()}`
+          );
+          if (attempts >= maxRetries) throw clone.status;
+
           await timeout(ENV.RETRY_INTERVAL);
           attempts++;
           continue;
@@ -85,6 +94,14 @@ export async function regtestComposeDown(name?: string) {
 
   console.log(`stopping regtest services... ${name}`);
   const out = await x(`cd ${ENV.REGTEST_WORKING_DIR} && docker compose down ${name}`);
+  return out.stdout;
+}
+
+export async function regtestComposeLogs(name?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`stopping regtest services... ${name}`);
+  const out = await x(`cd ${ENV.REGTEST_WORKING_DIR} && docker compose logs ${name}`);
   return out.stdout;
 }
 

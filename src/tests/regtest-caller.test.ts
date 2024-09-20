@@ -7,16 +7,17 @@ import { ENV } from '../env';
 import {
   broadcastAndWaitForTransaction,
   getAccount,
+  stacksNetwork,
   waitForBurnBlockHeight,
   waitForNetwork,
   waitForTransaction,
 } from '../helpers';
-import { networkEnvUp, networkEnvDown, withRetry } from '../utils';
+import { networkEnvDown, networkEnvUp, withRetry } from '../utils';
 
 jest.setTimeout(1_000_000_000);
 
 describe('regtest-env pox-4 caller', () => {
-  const network = new StacksDevnet({ fetchFn: withRetry(3, fetch) }); // this test only works on regtest-env
+  const network = stacksNetwork();
 
   let poxInfo: PoxInfo;
   let client: StackingClient;
