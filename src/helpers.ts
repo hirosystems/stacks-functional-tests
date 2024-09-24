@@ -334,6 +334,7 @@ export async function getWalletAccounts(seed: string) {
 export async function waitForNetwork() {
   console.log('waiting for network...');
   await withRetry(1_000, getInfoStatus)();
+  await waitForBurnBlockHeight(ENV.WAIT_UNTIL_BURN_HEIGHT);
 }
 
 export async function waitForNextCycle(poxInfo: PoxInfo) {
@@ -416,37 +417,38 @@ export async function waitForBurnBlockHeight(
   }
 }
 
-export async function broadcastAndWaitForTransaction(
-  tx: StacksTransaction,
-  network: StacksNetwork
-): Promise<Transaction> {
-  const socketClient = newSocketClient();
-  const txWaiter = waiter<Transaction>();
+export const broadcastAndWaitForTransaction = withTimeout(
+  ENV.STACKS_TX_TIMEOUT,
+  async (tx: StacksTransaction, network: StacksNetwork): Promise<Transaction> => {
+    const socketClient = newSocketClient();
+    const txWaiter = waiter<Transaction>();
 
-  const broadcast = await broadcastTransaction(tx, network);
-  logger.debug(`Broadcast: 0x${broadcast.txid}`);
+    const broadcast = await broadcastTransaction(tx, network);
+    logger.debug(`Broadcast: 0x${broadcast.txid}`);
 
-  if (broadcast.error) {
-    logger.error(broadcast.error);
-    if (broadcast.reason) logger.error(broadcast.reason);
-    if (broadcast.reason_data) logger.error(broadcast.reason_data);
-    throw 'broadcast failed';
-  }
-
-  const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
-    if ('block_hash' in tx) {
-      logger.debug(`Confirmed: 0x${broadcast.txid}`);
-      txWaiter.finish(tx);
-    } else if (tx.tx_status == 'pending') {
-      logger.debug(`Mempool: 0x${broadcast.txid}`);
+    if (broadcast.error) {
+      logger.error(broadcast.error);
+      if (broadcast.reason) logger.error(broadcast.reason);
+      if (broadcast.reason_data) logger.error(broadcast.reason_data);
+      throw 'broadcast failed';
     }
-  });
-  const result = await txWaiter;
 
-  subscription.unsubscribe();
-  socketClient.socket.close();
-  return result;
-}
+    const subscription = socketClient.subscribeTransaction(`0x${broadcast.txid}`, tx => {
+      if ('block_hash' in tx) {
+        logger.debug(`Confirmed: 0x${broadcast.txid}`);
+        txWaiter.finish(tx);
+      } else if (tx.tx_status == 'pending') {
+        logger.debug(`Mempool: 0x${broadcast.txid}`);
+      }
+    });
+
+    const result = await txWaiter;
+
+    subscription.unsubscribe();
+    socketClient.socket.close();
+    return result;
+  }
+);
 
 export const waitForTransaction = withTimeout(
   ENV.STACKS_TX_TIMEOUT,

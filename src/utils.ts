@@ -21,10 +21,12 @@ export function withRetry<T, A extends any[]>(
           const clone = response.clone();
 
           // Don't retry on these errors:
-          if ((await clone.text()).includes('NoEstimateAvailable')) return response as T;
+          if (response.url.includes('/fees/')) {
+            return response as T;
+          }
 
           console.log(
-            `(retry) status: ${clone.status} (${attempts}/${maxRetries}) ${clone.url}\n${await clone.text()}`
+            `(retry) status: ${clone.status} (${attempts}/${maxRetries}) ${clone.url}\n${await clone.text().catch(() => '')}`
           );
           if (attempts >= maxRetries) throw clone.status;
 

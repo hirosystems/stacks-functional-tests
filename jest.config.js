@@ -4,7 +4,7 @@
  */
 
 module.exports = {
-  testTimeout: 1_000_000_000,
+  testTimeout: 3_600_000, // 1h
 
   // All imported modules in your tests should be mocked automatically
   // automock: false,
@@ -22,7 +22,7 @@ module.exports = {
   // collectCoverage: false,
 
   // An array of glob patterns indicating a set of files for which coverage information should be collected
-  collectCoverageFrom: ['src/**/*.ts', 'migrations/*.ts'],
+  collectCoverageFrom: ['src/**/*.ts'],
 
   // The directory where Jest should output its coverage files
   // coverageDirectory: undefined,

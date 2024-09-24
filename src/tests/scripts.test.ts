@@ -1,16 +1,20 @@
 import { StacksDevnet } from '@stacks/network';
-import { c32addressDecode } from 'c32check';
 import { StackingClient } from '@stacks/stacking';
+import { c32addressDecode } from 'c32check';
 import { ENV } from '../env';
 import { getAccount, getRewardSlots, getTentativeStackerSet, getTransactions } from '../helpers';
-import { Cl, ClarityType } from '@stacks/transactions';
 
-test('get account status', async () => {
+test('get info', async () => {
   const steph = getAccount(ENV.PRIVATE_KEYS[0]);
   const client = new StackingClient(steph.address, new StacksDevnet());
   const status = await client.getStatus();
   console.log(status);
-  console.log((await client.getPoxInfo()).current_burnchain_block_height);
+  const poxInfo = await client.getPoxInfo();
+  console.log(poxInfo.current_burnchain_block_height);
+  console.log(poxInfo.min_amount_ustx);
+  const balances = await steph.client.getAccountExtendedBalances();
+  console.log(balances);
+  console.log(BigInt(balances.stx.balance as string) > BigInt(poxInfo.min_amount_ustx) * 2n);
 });
 
 test('get account', async () => {

@@ -16,7 +16,7 @@ const schema = Type.Object({
       // funded accounts taken from `settings/Devnet.toml`
       'f9d7206a47f14d2870c163ebab4bf3e70d18f5d14ce1031f3902fbbc894fe4c701',
       '3eccc5dac8056590432db6a35d52b9896876a3d5cbdea53b72400bc9c2099fe801',
-      '7036b29cb5e235e5fd9b09ae3e8eec4404e44906814d5d01cbca968a60ed4bfb01', // regtest signer (stacks-signer-4, running but not aut0-stacking in regtest-env)
+      'f9d7206a47f14d2870c163ebab4bf3e70d18f5d14ce1031f3902fbbc894fe4c701', // regtest signer (stacks-signer-4, running but not auto-stacking in regtest-env)
       '7287ba251d44a4d3fd9276c88ce34c5c52a038955511cccaf77e61068649c17801', // devnet signer
       '530d9f61984c888536871c6573073bdfc0058896dc1adfe9a6a10dfacadc209101', // devnet signer
       'd655b2523bcd65e34889725c73064feb17ceb796831c0e111ba1a552b0f31b3901', // devnet signer
@@ -30,6 +30,9 @@ const schema = Type.Object({
       // taken from `settings/Devnet.toml`
       'board list obtain sugar hour worth raven scout denial thunder horse logic fury scorpion fold genuine phrase wealth news aim below celery when cabin',
   }),
+
+  /** Height to wait for after waiting for the network to boot up */
+  WAIT_UNTIL_BURN_HEIGHT: Type.Integer({ default: 108 }),
 
   /**
    * Command to run to start regtest-env.
