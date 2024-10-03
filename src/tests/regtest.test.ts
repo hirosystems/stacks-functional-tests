@@ -1,6 +1,5 @@
 import { timeout } from '@hirosystems/api-toolkit';
 import { bytesToHex } from '@stacks/common';
-import { StacksDevnet } from '@stacks/network';
 import { PoxInfo, StackingClient, poxAddressToTuple } from '@stacks/stacking';
 import {
   Cl,
@@ -13,6 +12,7 @@ import {
   getNonce,
   makeContractCall,
 } from '@stacks/transactions';
+import { c32addressDecode } from 'c32check';
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
@@ -21,40 +21,50 @@ import {
   getAccount,
   getPox4Events,
   getRewards,
+  getStackerSet,
   isInPreparePhase,
+  stacksNetwork,
   waitForBurnBlockHeight,
+  waitForNetwork,
   waitForNextCycle,
-  waitForNode,
   waitForPreparePhase,
   waitForRewardPhase,
   waitForTransaction,
 } from '../helpers';
-import { startRegtestEnv, stopRegtestEnv, storeEventsTsv, withRetry } from '../utils';
+import { networkEnvDown, networkEnvUp } from '../utils';
 
-jest.setTimeout(1_000_000_000);
+jest.retryTimes(3);
 
 describe('regtest-env pox-4', () => {
-  const network = new StacksDevnet({ fetchFn: withRetry(3, fetch) }); // this test only works on regtest-env
+  const network = stacksNetwork();
   let poxInfo: PoxInfo;
 
   beforeEach(async () => {
-    await startRegtestEnv();
-    await waitForNode();
+    await networkEnvUp();
+    await waitForNetwork();
   });
 
   afterEach(async () => {
-    await stopRegtestEnv();
+    await networkEnvDown();
   });
+
+  // NOTES E2E
+  // - run all existing tests
+  // - add signer rollover test
+  // - ensure multiple miners
+  // - validate signers keys from block headers (w/ Hank)
+
+  // STACKING
 
   test('stack-stx (in reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
-    const client = new StackingClient(steph.address, network);
+    const client = steph.client;
 
     poxInfo = await client.getPoxInfo();
     const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
@@ -100,9 +110,6 @@ describe('regtest-env pox-4', () => {
     expect(result.tx_result.repr).toContain('(ok');
     expect(result.tx_status).toBe('success');
 
-    await timeout(1000); // current-cycle: 5
-    await storeEventsTsv('S1'); // snapshot 1 (stacking tx was successful)
-
     // CHECK POX-4 EVENTS
     const { results } = await getPox4Events();
     const datas = results
@@ -111,6 +118,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -134,16 +142,15 @@ describe('regtest-env pox-4', () => {
     await waitForPreparePhase(poxInfo);
 
     // height: 116
-    await storeEventsTsv('S2'); // snapshot 2 (in prepare phase, pox-anchor block was mined, pox-set has been sent for cycle 6)
 
     await waitForNextCycle(poxInfo);
     poxInfo = await client.getPoxInfo();
 
     // height: 120, current-cycle: 6
-    await storeEventsTsv('S3'); // snapshot 3 (steph is stacked in the current cycle)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(1000);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
@@ -151,9 +158,6 @@ describe('regtest-env pox-4', () => {
     const reward = (await getRewards(steph.btcAddress))[0];
     expect(reward).toBeDefined();
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('stack-stx (before prepare-phase)', async () => {
@@ -161,8 +165,8 @@ describe('regtest-env pox-4', () => {
     // steph is a solo stacker and stacks on a prepare-phase start (not deep in
     // the prepare phase)
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -175,12 +179,12 @@ describe('regtest-env pox-4', () => {
     poxInfo = await client.getPoxInfo();
     await waitForRewardPhase(poxInfo); // ensure we are not already somewhere in the prepare phase
     poxInfo = await client.getPoxInfo();
-    await waitForPreparePhase(poxInfo, -1); // one before real prepare phase
+    await waitForPreparePhase(poxInfo, -2); // two before real prepare phase
 
     poxInfo = await client.getPoxInfo();
     expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
     expect(
-      isInPreparePhase((poxInfo.current_burnchain_block_height as number) + 1, poxInfo)
+      isInPreparePhase((poxInfo.current_burnchain_block_height as number) + 2, poxInfo)
     ).toBeTruthy();
 
     // TRANSACTION (stack-stx)
@@ -188,8 +192,11 @@ describe('regtest-env pox-4', () => {
     const currentCycle = poxInfo.reward_cycle_id;
     const nextCycle = currentCycle + 1;
     const lockPeriod = 1;
-    const amount = BigInt(poxInfo.min_amount_ustx) * 3n;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 7n;
     const authId = crypto.randomBytes(1)[0];
+
+    expect(await getStackerSet(nextCycle)).toBeUndefined(); // stacker set isn't ready yet
+
     const signature = client.signPoxSignature({
       topic: 'stack-stx',
       period: lockPeriod,
@@ -216,16 +223,42 @@ describe('regtest-env pox-4', () => {
     expect(result.tx_result.repr).toContain('(ok');
     expect(result.tx_status).toBe('success');
 
+    expect(result.burn_block_height).toBe(stackHeight + 1);
+
+    poxInfo = await client.getPoxInfo();
+    expect(
+      isInPreparePhase((poxInfo.current_burnchain_block_height as number) + 1, poxInfo)
+    ).toBeTruthy();
+
+    await waitForBurnBlockHeight(stackHeight + 2); // first block which has next reward set / prepare phase started
+
+    poxInfo = await client.getPoxInfo();
+    expect(
+      isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)
+    ).toBeTruthy();
+
+    await timeout(1000); // TODO: flakiness? should be set once we're in the prepare phase
+    const set = await getStackerSet(nextCycle);
+    expect(set).toBeDefined();
+    expect(JSON.stringify(set)).toContain(c32addressDecode(steph.address)[1]); // stacker is in reward set
+
+    await waitForRewardPhase(poxInfo, +1);
+    poxInfo = await client.getPoxInfo();
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.min_amount_ustx));
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.current_cycle.min_threshold_ustx));
+    expect(poxInfo.current_cycle.id).toBe(nextCycle);
+    expect(poxInfo.current_cycle.is_pox_active).toBeTruthy();
+
     // CHECK POX-4 EVENTS
     const { results } = await getPox4Events();
     const datas = results
       .map(r => r.data)
       .filter(d => d.signer_key.includes(signer.signerPublicKey));
 
-    // todo: this is incorrect on the stacks-node side currently, it shouldn't have the prepare offset included yet
     expect(datas).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
+        lock_amount: amount.toString(),
+        start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -234,32 +267,144 @@ describe('regtest-env pox-4', () => {
     let info = await client.getStatus();
     if (!info.stacked) throw 'not stacked';
 
-    expect(info.details.unlock_height).toBeGreaterThan(0);
-    expect(info.details.unlock_height).toBe(
+    const unlockHeight = info.details.unlock_height;
+    expect(unlockHeight).toBeGreaterThan(0);
+    expect(unlockHeight).toBe(
       stackHeight -
         (stackHeight % poxInfo.reward_cycle_length) +
         poxInfo.reward_cycle_length * (lockPeriod + 1)
     );
-    expect(burnHeightToRewardCycle(info.details.unlock_height, poxInfo)).toBe(
-      nextCycle + lockPeriod
-    ); // same as end_cycle_id
+    expect(burnHeightToRewardCycle(unlockHeight, poxInfo)).toBe(nextCycle + lockPeriod); // same as end_cycle_id
 
-    poxInfo = await client.getPoxInfo();
-    await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
-
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(1000);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
-    // ENSURE REWARDS
+    // ENSURE NO REWARDS
     const reward = (await getRewards(steph.btcAddress))[0];
     expect(reward).toBeDefined();
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
+  });
 
-    // EXPORT EVENTS
-    await storeEventsTsv();
+  test('stack-stx (on prepare-phase start)', async () => {
+    // TEST CASE
+    // steph is a solo stacker and stacks on a prepare-phase start (not deep in
+    // the prepare phase)
+    // but steph doesn't run a signer, so we need to use a different signer key
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
+
+    // PREP
+    const client = new StackingClient(steph.address, network);
+
+    poxInfo = await client.getPoxInfo();
+    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
+
+    await waitForBurnBlockHeight(pox4Activation);
+
+    poxInfo = await client.getPoxInfo();
+    await waitForRewardPhase(poxInfo); // ensure we are not already somewhere in the prepare phase
+    poxInfo = await client.getPoxInfo();
+    await waitForPreparePhase(poxInfo, -1); // one before real prepare phase
+
+    poxInfo = await client.getPoxInfo();
+    expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
+    expect(
+      isInPreparePhase((poxInfo.current_burnchain_block_height as number) + 1, poxInfo)
+    ).toBeTruthy();
+
+    // TRANSACTION (stack-stx)
+    const stackHeight = poxInfo.current_burnchain_block_height as number;
+    const currentCycle = poxInfo.reward_cycle_id;
+    const nextCycle = currentCycle + 1;
+    const lockPeriod = 1;
+    const amount = BigInt(poxInfo.min_amount_ustx) * 7n;
+    const authId = crypto.randomBytes(1)[0];
+
+    expect(await getStackerSet(nextCycle)).toBeUndefined(); // stacker set isn't ready yet
+
+    const signature = client.signPoxSignature({
+      topic: 'stack-stx',
+      period: lockPeriod,
+      rewardCycle: currentCycle,
+      poxAddress: steph.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: amount,
+      authId,
+    });
+    const { txid } = await client.stack({
+      amountMicroStx: amount,
+      poxAddress: steph.btcAddress,
+      cycles: lockPeriod,
+      burnBlockHeight: stackHeight,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount,
+      authId,
+      privateKey: steph.key,
+    });
+    console.log('txid', txid);
+
+    const result = await waitForTransaction(txid);
+    expect(result.tx_result.repr).toContain('(ok');
+    expect(result.tx_status).toBe('success');
+
+    expect(result.burn_block_height).toBe(stackHeight + 1);
+    console.log('stackHeight', result.burn_block_height, stackHeight + 1);
+
+    poxInfo = await client.getPoxInfo();
+    expect(
+      isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)
+    ).toBeTruthy();
+    const set = await getStackerSet(nextCycle);
+    expect(set).toBeDefined();
+    expect(JSON.stringify(set)).not.toContain(c32addressDecode(steph.address)[1]); // stacker is NOT in reward set
+
+    await waitForRewardPhase(poxInfo, +1);
+    poxInfo = await client.getPoxInfo();
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.min_amount_ustx));
+    expect(amount).toBeGreaterThan(BigInt(poxInfo.current_cycle.min_threshold_ustx));
+    expect(poxInfo.current_cycle.id).toBe(nextCycle);
+    expect(poxInfo.current_cycle.is_pox_active).toBeTruthy();
+
+    // CHECK POX-4 EVENTS
+    const { results } = await getPox4Events();
+    const datas = results
+      .map(r => r.data)
+      .filter(d => d.signer_key.includes(signer.signerPublicKey));
+
+    expect(datas).toContainEqual(
+      expect.objectContaining({
+        lock_amount: amount.toString(),
+        start_cycle_id: (nextCycle + 1).toString(),
+        end_cycle_id: (nextCycle + lockPeriod).toString(),
+      })
+    );
+
+    // CHECK UNLOCK HEIGHT AND WAIT FOR UNLOCK
+    let info = await client.getStatus();
+    if (!info.stacked) throw 'not stacked';
+
+    const unlockHeight = info.details.unlock_height;
+    expect(unlockHeight).toBeGreaterThan(0);
+    expect(unlockHeight).toBe(
+      stackHeight -
+        (stackHeight % poxInfo.reward_cycle_length) +
+        poxInfo.reward_cycle_length * (lockPeriod + 1)
+    );
+    expect(burnHeightToRewardCycle(unlockHeight, poxInfo)).toBe(nextCycle + lockPeriod); // same as end_cycle_id
+
+    if (ENV.SKIP_UNLOCK) return;
+    await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(1000);
+    info = await client.getStatus();
+    expect(info.stacked).toBeFalsy();
+
+    // ENSURE NO REWARDS
+    const reward = (await getRewards(steph.btcAddress))[0];
+    expect(reward).toBeUndefined();
   });
 
   test('stack-stx (in prepare-phase)', async () => {
@@ -268,8 +413,8 @@ describe('regtest-env pox-4', () => {
     // prepare-phase has started, which is considered a neglected prepare-phase
     // for stacking -- this should result in no rewards being paid out.
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -331,6 +476,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -352,19 +498,16 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked, but didn't make it in time for rewards)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(info.details.unlock_height + 2);
+    await timeout(1000);
     info = await client.getStatus();
     expect(info.stacked).toBeFalsy();
 
     // ENSURE NO REWARDS
     const rewards = await getRewards(steph.btcAddress);
     expect(rewards.every(r => r.burn_block_height < stackHeight)).toBeTruthy(); // no new rewards
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase), stack-extend (reward-phase)', async () => {
@@ -372,8 +515,8 @@ describe('regtest-env pox-4', () => {
     // steph is a solo stacker and stacks in a reward-phase
     // steph then extends in a reward-phase
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -423,11 +566,13 @@ describe('regtest-env pox-4', () => {
     expect(result.tx_status).toBe('success');
 
     // CHECK POX-4 EVENTS
+    await timeout(250);
     const { results } = await getPox4Events();
     let datas = results.map(r => r.data).filter(d => d.signer_key.includes(signer.signerPublicKey));
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -440,7 +585,6 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     expect(poxInfo.reward_cycle_id).toBe(nextCycle);
@@ -477,6 +621,7 @@ describe('regtest-env pox-4', () => {
     expect(resultExtend.tx_status).toBe('success');
 
     // CHECK POX-4 EVENTS
+    await timeout(250);
     const { results: resultsExtend } = await getPox4Events();
     datas = resultsExtend
       .map(r => r.data)
@@ -501,10 +646,10 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S2'); // snapshot 2 (steph is stacked and extended in the current cycle)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -512,9 +657,6 @@ describe('regtest-env pox-4', () => {
     const rewards = await getRewards(steph.btcAddress);
     expect(rewards.filter(r => r.burn_block_height > stackHeight).length).toBeGreaterThan(0);
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBeGreaterThan(0);
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase), stack-extend (prepare-phase)', async () => {
@@ -522,8 +664,8 @@ describe('regtest-env pox-4', () => {
     // steph is a solo stacker and stacks in a reward-phase
     // steph then attempts to extend in a prepare-phase
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -578,6 +720,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -590,7 +733,6 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     await waitForPreparePhase(poxInfo);
@@ -655,10 +797,10 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the extend didn't make it in time)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -666,9 +808,6 @@ describe('regtest-env pox-4', () => {
     const rewards = await getRewards(steph.btcAddress);
     expect(rewards.filter(r => r.burn_block_height > stackHeight).length).toBeGreaterThan(0);
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBe(0); // extend didn't make it
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase), stack-increase (reward-phase)', async () => {
@@ -676,8 +815,8 @@ describe('regtest-env pox-4', () => {
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a reward-phase
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -732,6 +871,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -744,7 +884,6 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     expect(poxInfo.reward_cycle_id).toBe(nextCycle);
@@ -786,6 +925,8 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        increase_by: increaseBy.toString(),
+        total_locked: (amount + increaseBy).toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: burnHeightToRewardCycle(stackUnlock, poxInfo).toString(), // original unlock
       })
@@ -800,10 +941,10 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked and increased for the current cycle)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -811,9 +952,6 @@ describe('regtest-env pox-4', () => {
     const rewards = await getRewards(steph.btcAddress);
     expect(rewards.filter(r => r.burn_block_height > stackHeight).length).toBeGreaterThan(0);
     expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('stack-stx (reward-phase), stack-increase (prepare-phase)', async () => {
@@ -821,8 +959,8 @@ describe('regtest-env pox-4', () => {
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a prepare-phase
     // but steph doesn't run a signer, so we need to use a different signer key
-    const steph = getAccount(ENV.REGTEST_KEYS[0]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const steph = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient(steph.address, network);
@@ -877,6 +1015,7 @@ describe('regtest-env pox-4', () => {
 
     expect(datas).toContainEqual(
       expect.objectContaining({
+        lock_amount: amount.toString(),
         start_cycle_id: nextCycle.toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
@@ -889,7 +1028,6 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S1'); // snapshot 1 (steph is stacked in the current cycle)
 
     poxInfo = await client.getPoxInfo();
     await waitForPreparePhase(poxInfo);
@@ -949,10 +1087,10 @@ describe('regtest-env pox-4', () => {
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
-    await storeEventsTsv('S2'); // snapshot 2 (steph was stacked, but the increase didn't make it in time)
 
-    if (ENV.REGTEST_SKIP_UNLOCK) return;
+    if (ENV.SKIP_UNLOCK) return;
     await waitForBurnBlockHeight(status.details.unlock_height + 2); // +1 is more correct, but often fails (race-condition?)
+    await timeout(1000);
     status = await client.getStatus();
     expect(status.stacked).toBeFalsy();
 
@@ -962,9 +1100,6 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
 
     // todo: (functional) some how ensure the slots were not increased on the blockchain side
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
   test('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
@@ -974,10 +1109,10 @@ describe('regtest-env pox-4', () => {
     // the pool commits (in the reward-phase)
     // the pool stacks for bob (in the prepare-phase)
     // the pool commit-increases (in the prepare-phase)
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const bob = getAccount(ENV.REGTEST_KEYS[1]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const bob = getAccount(ENV.PRIVATE_KEYS[1]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1040,15 +1175,14 @@ describe('regtest-env pox-4', () => {
     );
 
     // TRANSACTION (pool commit)
-    const authId = crypto.randomBytes(1)[0];
-    const signature = pool.client.signPoxSignature({
+    let signature = pool.client.signPoxSignature({
       topic: 'agg-commit',
       period: 1,
       rewardCycle: nextCycle,
       poxAddress: pool.btcAddress,
       signerPrivateKey: signer.signerPrivateKey,
       maxAmount: amount * 2n,
-      authId,
+      authId: 0,
     });
     const { txid: poolCommit } = await pool.client.stackAggregationCommitIndexed({
       poxAddress: pool.btcAddress,
@@ -1056,7 +1190,7 @@ describe('regtest-env pox-4', () => {
       signerKey: signer.signerPublicKey,
       signerSignature: signature,
       maxAmount: amount * 2n,
-      authId,
+      authId: 0,
       privateKey: pool.key,
       nonce: poolNonce++,
     });
@@ -1070,7 +1204,7 @@ describe('regtest-env pox-4', () => {
     expect(eventsCommit.map(r => r.data)).toContainEqual(
       expect.objectContaining({
         start_cycle_id: nextCycle.toString(),
-        end_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be +1
+        end_cycle_id: (nextCycle + 1).toString(),
       })
     );
 
@@ -1106,10 +1240,23 @@ describe('regtest-env pox-4', () => {
     expect(await bob.client.getAccountBalanceLocked()).toBe(amount);
 
     // TRANSACTION (pool commit-increase)
+    signature = pool.client.signPoxSignature({
+      topic: 'agg-increase',
+      period: 1,
+      rewardCycle: nextCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: amount * 2n,
+      authId: 1,
+    });
     const { txid: poolIncrease } = await pool.client.stackAggregationIncrease({
       poxAddress: pool.btcAddress,
       rewardCycle: nextCycle,
       rewardIndex: commitIndex,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: amount * 2n,
+      authId: 1,
       privateKey: pool.key,
       nonce: poolNonce++,
     });
@@ -1121,11 +1268,12 @@ describe('regtest-env pox-4', () => {
 
     expect(eventsIncrease.map(r => r.data)).toContainEqual(
       expect.objectContaining({
-        start_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be // + prepare offset
-        end_cycle_id: nextCycle.toString(), // todo: incorrect on core, should be +1
+        start_cycle_id: (nextCycle + 1).toString(), // + prepare offset
+        end_cycle_id: (nextCycle + 1).toString(),
       })
     );
 
+    await timeout(1000);
     const rewardSet = await pool.client.getRewardSet({
       contractId: poxInfo.contract_id,
       rewardCyleId: nextCycle,
@@ -1133,12 +1281,9 @@ describe('regtest-env pox-4', () => {
     });
     expect(rewardSet).toBeDefined();
     expect(rewardSet?.total_ustx).toBe(amount * 2n);
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
   });
 
-  test.skip('pool: agg increase over maxAmount', async () => {
+  test('pool: agg increase over maxAmount', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (a part of her delegated amount)
@@ -1146,9 +1291,9 @@ describe('regtest-env pox-4', () => {
     // pool delegate stack increases for alice (the remaining amount)
     // pool increases commit, but the signature was only for the initial amount
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
-    const signer = getAccount(ENV.SIGNER_KEY);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[1]);
+    const signer = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1164,7 +1309,7 @@ describe('regtest-env pox-4', () => {
     poxInfo = await client.getPoxInfo();
     expect(isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)).toBeFalsy();
 
-    const fullAmount = BigInt(poxInfo.min_amount_ustx) * 6n;
+    const fullAmount = BigInt(poxInfo.min_amount_ustx) * 4n;
     const nextCycle = poxInfo.reward_cycle_id + 1;
     const delegateStackCycles = 3;
 
@@ -1183,7 +1328,7 @@ describe('regtest-env pox-4', () => {
     let poolNonce = await getNonce(pool.address, network);
     const { txid: poolAlice } = await pool.client.delegateStackStx({
       stacker: alice.address,
-      amountMicroStx: fullAmount * (2n / 5n),
+      amountMicroStx: (fullAmount * 1n) / 4n,
       poxAddress: pool.btcAddress,
       burnBlockHeight: poxInfo.current_burnchain_block_height,
       cycles: delegateStackCycles,
@@ -1195,14 +1340,14 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_result.repr).toContain('(ok');
 
     // TRANSACTION (pool commit)
-    const authId = crypto.randomBytes(1)[0];
-    const signature = pool.client.signPoxSignature({
+    let authId = crypto.randomBytes(1)[0];
+    let signature = pool.client.signPoxSignature({
       topic: 'agg-commit',
       period: 1,
       rewardCycle: nextCycle,
       poxAddress: pool.btcAddress,
       signerPrivateKey: signer.signerPrivateKey,
-      maxAmount: fullAmount * (2n / 5n),
+      maxAmount: (fullAmount * 1n) / 4n,
       authId,
     });
     const { txid: poolCommit } = await pool.client.stackAggregationCommitIndexed({
@@ -1210,7 +1355,7 @@ describe('regtest-env pox-4', () => {
       rewardCycle: nextCycle,
       signerKey: signer.signerPublicKey,
       signerSignature: signature,
-      maxAmount: fullAmount * (2n / 5n),
+      maxAmount: (fullAmount * 1n) / 4n,
       authId,
       privateKey: pool.key,
       nonce: poolNonce++,
@@ -1225,7 +1370,7 @@ describe('regtest-env pox-4', () => {
     const { txid: poolAliceInc } = await pool.client.delegateStackIncrease({
       stacker: alice.address,
       poxAddress: pool.btcAddress,
-      increaseBy: fullAmount * (3n / 5n), // more than the initial amount
+      increaseBy: (fullAmount * 1n) / 4n,
       privateKey: pool.key,
       nonce: poolNonce++,
     });
@@ -1234,41 +1379,79 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceIncTx.tx_result.repr).toContain('(ok');
 
     // TRANSACTION (pool commit-increase)
+    authId = crypto.randomBytes(1)[0];
+    signature = pool.client.signPoxSignature({
+      topic: 'agg-increase',
+      period: 1,
+      rewardCycle: nextCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: (fullAmount * 1n) / 4n, // doesn't account for increase
+      authId,
+    });
     const { txid: poolInc } = await pool.client.stackAggregationIncrease({
       poxAddress: pool.btcAddress,
       rewardCycle: nextCycle,
       rewardIndex: commitIndex,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: (fullAmount * 1n) / 4n,
+      authId,
       privateKey: pool.key,
       nonce: poolNonce++,
     });
     const poolIncTx = await waitForTransaction(poolInc);
-    expect(poolIncTx.tx_status).toBe('success');
-    expect(poolIncTx.tx_result.repr).toContain('(ok');
+    expect(poolIncTx.tx_status).toBe('abort_by_response');
+    expect(poolIncTx.tx_result.repr).toContain('(err 38');
+
+    // TRANSACTION (pool commit-increase)
+    authId = crypto.randomBytes(1)[0];
+    signature = pool.client.signPoxSignature({
+      topic: 'agg-increase',
+      period: 1,
+      rewardCycle: nextCycle,
+      poxAddress: pool.btcAddress,
+      signerPrivateKey: signer.signerPrivateKey,
+      maxAmount: (fullAmount * 2n) / 4n, // accounts for increase
+      authId,
+    });
+    const { txid: poolInc2 } = await pool.client.stackAggregationIncrease({
+      poxAddress: pool.btcAddress,
+      rewardCycle: nextCycle,
+      rewardIndex: commitIndex,
+      signerKey: signer.signerPublicKey,
+      signerSignature: signature,
+      maxAmount: (fullAmount * 2n) / 4n,
+      authId,
+      privateKey: pool.key,
+      nonce: poolNonce++,
+    });
+    const poolInc2Tx = await waitForTransaction(poolInc2);
+    expect(poolInc2Tx.tx_status).toBe('success');
+    expect(poolInc2Tx.tx_result.repr).toContain('(ok');
 
     // CHECK LOCKED
-    expect(await alice.client.getAccountBalanceLocked()).toBe(fullAmount);
+    expect(await alice.client.getAccountBalanceLocked()).toBe((fullAmount * 2n) / 4n);
 
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
 
+    await timeout(1000);
     const rewardSet = await pool.client.getRewardSet({
       contractId: poxInfo.contract_id,
       rewardCyleId: nextCycle,
       rewardSetIndex: Number(commitIndex),
     });
     expect(rewardSet).toBeDefined();
-    expect(rewardSet?.total_ustx).toBe(fullAmount);
-
-    // EXPORT EVENTS
-    await storeEventsTsv();
+    expect(rewardSet?.total_ustx).toBe((fullAmount * 2n) / 4n);
   });
 
   test('pool: delegate with invalid hashbyte length', async () => {
     // TEST CASE
     // alice delegates to a pool with an invalid hashbyte length
     // the transaction should fail (but won't)
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1312,32 +1495,32 @@ describe('regtest-env pox-4', () => {
     const { txid: aliceDelegate } = await broadcastTransaction(tx, network);
 
     const aliceDelegateTx = await waitForTransaction(aliceDelegate);
-    expect(aliceDelegateTx.tx_result.repr).toContain('(err 23');
-    expect(aliceDelegateTx.tx_status).toBe('aborted_by_response');
+    expect(aliceDelegateTx.tx_result.repr).toContain('(err 13');
+    expect(aliceDelegateTx.tx_status).toBe('abort_by_response');
 
     // TRANSACTION (pool delegate-stack-stx)
     const poolNonce = await getNonce(pool.address, network);
     const { txid: poolAlice } = await pool.client.delegateStackStx({
       stacker: alice.address,
       amountMicroStx: amount,
-      poxAddress: pool.btcAddress, // will be different to the one alice delegated to
+      poxAddress: pool.btcAddress,
       burnBlockHeight: poxInfo.current_burnchain_block_height,
       cycles: 2,
       privateKey: pool.key,
       nonce: poolNonce,
     });
     const poolAliceTx = await waitForTransaction(poolAlice);
-    expect(poolAliceTx.tx_result.repr).toContain('(ok');
-    expect(poolAliceTx.tx_status).toBe('success');
+    expect(poolAliceTx.tx_result.repr).toContain('(err 9');
+    expect(poolAliceTx.tx_status).toBe('abort_by_response');
 
     // wait a bit to see what happens
     poxInfo = await client.getPoxInfo();
     await waitForBurnBlockHeight(
-      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+      (poxInfo.current_burnchain_block_height as number) + 2 * poxInfo.reward_cycle_length
     );
 
     expect((await client.getPoxInfo()).current_burnchain_block_height).toBe(
-      (poxInfo.current_burnchain_block_height as number) + 3 * poxInfo.reward_cycle_length
+      (poxInfo.current_burnchain_block_height as number) + 2 * poxInfo.reward_cycle_length
     );
   });
 
@@ -1347,8 +1530,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (in the reward-phase) for a cycle that is not the next cycle
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1399,8 +1582,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (in the reward-phase)
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1460,8 +1643,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (in the reward-phase)
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1535,8 +1718,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (with a higher amount)
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1585,9 +1768,9 @@ describe('regtest-env pox-4', () => {
     // pool B tries to delegate-stack-stx for alice
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const poolA = getAccount(ENV.REGTEST_KEYS[1]);
-    const poolB = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const poolA = getAccount(ENV.PRIVATE_KEYS[1]);
+    const poolB = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1612,7 +1795,9 @@ describe('regtest-env pox-4', () => {
       poxAddress: poolA.btcAddress,
       privateKey: alice.key,
     });
-    await waitForTransaction(aliceDelegate);
+    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
+    expect(aliceDelegateTx.tx_result.repr).toContain('(ok');
+    expect(aliceDelegateTx.tx_status).toBe('success');
 
     // TRANSACTION (pool delegate-stack-stx)
     const poolNonce = await getNonce(poolB.address, network);
@@ -1636,8 +1821,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (in the reward-phase) for the current cycle
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1681,13 +1866,13 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test('Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker', async () => {
+  test('Pool delegate cannot delegate-stack-stx to an un-delegated entity', async () => {
     // TEST CASE
     // pool delegate stacks for alice (in the reward-phase)
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1724,8 +1909,8 @@ describe('regtest-env pox-4', () => {
     // alice revokes the delegation
     // alice is still locked
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1778,7 +1963,7 @@ describe('regtest-env pox-4', () => {
     poxInfo = await client.getPoxInfo();
     await waitForNextCycle(poxInfo);
 
-    expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
+    expect(await alice.client.getAccountBalanceLocked()).toBe(amount); // also still locked for next cycle
   });
 
   test('Pool can pre-approve a signature for participants', async () => {
@@ -1788,9 +1973,9 @@ describe('regtest-env pox-4', () => {
     // alice can use the signature while only knowing the signer-key, max-amount, auth-id
     // bob can't use the consumed signature
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const bob = getAccount(ENV.REGTEST_KEYS[1]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const bob = getAccount(ENV.PRIVATE_KEYS[1]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[2]); // signer, not actually pooling
 
     // PREP
     const client = new StackingClient('', network);
@@ -1902,9 +2087,9 @@ describe('regtest-env pox-4', () => {
     // alice increases stack with signer B
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const signerA = getAccount(ENV.REGTEST_KEYS[1]);
-    const signerB = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signerA = getAccount(ENV.PRIVATE_KEYS[3]);
+    const signerB = getAccount(ENV.PRIVATE_KEYS[4]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -1981,9 +2166,9 @@ describe('regtest-env pox-4', () => {
     // alice extends stack with signer B
     // the transaction should work, because it's essentially like a new stack (separate from the first)
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const signerA = getAccount(ENV.REGTEST_KEYS[1]);
-    const signerB = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const signerA = getAccount(ENV.PRIVATE_KEYS[3]);
+    const signerB = getAccount(ENV.PRIVATE_KEYS[4]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2060,7 +2245,7 @@ describe('regtest-env pox-4', () => {
     // call a read-only function with a weird string
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2106,8 +2291,8 @@ describe('regtest-env pox-4', () => {
     // alice delegates to a pool with an invalid pox-addr-version
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2152,9 +2337,9 @@ describe('regtest-env pox-4', () => {
     // alice tries to delegate to another pool
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const poolA = getAccount(ENV.REGTEST_KEYS[1]);
-    const poolB = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const poolA = getAccount(ENV.PRIVATE_KEYS[1]);
+    const poolB = getAccount(ENV.PRIVATE_KEYS[2]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2197,8 +2382,8 @@ describe('regtest-env pox-4', () => {
     // alice revokes stx from a pool (without having delegated)
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2226,8 +2411,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate stacks for alice (in the reward-phase)
     // alice should be locked
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2316,8 +2501,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate tries to delegate-stack for alice
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2376,8 +2561,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to commit the stack for the current cycle
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2441,52 +2626,6 @@ describe('regtest-env pox-4', () => {
     expect(poolCommitTx.tx_status).toBe('abort_by_response');
   });
 
-  test('Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool', async () => {
-    // TEST CASE
-    // alice delegates to a pool A
-    // pool B tries to delegate-stack for alice
-    // the transaction should fail
-
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const poolA = getAccount(ENV.REGTEST_KEYS[1]);
-    const poolB = getAccount(ENV.REGTEST_KEYS[2]);
-
-    // PREP
-    const client = new StackingClient('', network);
-
-    poxInfo = await client.getPoxInfo();
-    const pox4Activation = poxInfo.contract_versions[3].activation_burnchain_block_height;
-    await waitForBurnBlockHeight(pox4Activation + 1);
-
-    poxInfo = await client.getPoxInfo();
-
-    const amount = BigInt(poxInfo.min_amount_ustx) * 2n;
-
-    // TRANSACTION (alice delegate)
-    const { txid: aliceDelegate } = await alice.client.delegateStx({
-      amountMicroStx: amount,
-      delegateTo: poolA.address,
-      poxAddress: poolA.btcAddress,
-      privateKey: alice.key,
-    });
-    const aliceDelegateTx = await waitForTransaction(aliceDelegate);
-    expect(aliceDelegateTx.tx_result.repr).toContain('(ok');
-    expect(aliceDelegateTx.tx_status).toBe('success');
-
-    // TRANSACTION (pool delegate-stack-stx)
-    const { txid: poolAlice } = await poolB.client.delegateStackStx({
-      stacker: alice.address,
-      amountMicroStx: amount,
-      poxAddress: poolB.btcAddress,
-      burnBlockHeight: poxInfo.current_burnchain_block_height,
-      cycles: 2,
-      privateKey: poolB.key,
-    });
-    const poolAliceTx = await waitForTransaction(poolAlice);
-    expect(poolAliceTx.tx_result.repr).toContain('(err');
-    expect(poolAliceTx.tx_status).toBe('abort_by_response');
-  });
-
   test('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
     // TEST CASE
     // alice delegates to a pool
@@ -2494,8 +2633,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice with more STX than what alice has explicitly allowed
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2552,9 +2691,9 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice with a different pox-addr
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
-    const random = getAccount(ENV.REGTEST_KEYS[1]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
+    const random = getAccount(ENV.PRIVATE_KEYS[1]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2598,8 +2737,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2646,8 +2785,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice with more STX than what alice has
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2695,8 +2834,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice for more than 12 cycles
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2764,8 +2903,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice with an invalid pox-addr-ver
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2821,8 +2960,8 @@ describe('regtest-env pox-4', () => {
     // pool tries to delegate-stack for alice
     // the transaction should fail
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2875,8 +3014,8 @@ describe('regtest-env pox-4', () => {
     // pool delegate-stack-extend for alice
     // lock has been extended
 
-    const alice = getAccount(ENV.REGTEST_KEYS[0]);
-    const pool = getAccount(ENV.REGTEST_KEYS[2]);
+    const alice = getAccount(ENV.PRIVATE_KEYS[0]);
+    const pool = getAccount(ENV.PRIVATE_KEYS[3]);
 
     // PREP
     const client = new StackingClient('', network);
@@ -2940,3 +3079,41 @@ describe('regtest-env pox-4', () => {
     expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
   });
 });
+
+//     ✓ stack-stx (in reward-phase) (203603 ms)
+//     ✕ stack-stx (before prepare-phase) (52573 ms)
+//     ✕ stack-stx (on prepare-phase start) (68493 ms)
+//     ✓ stack-stx (in prepare-phase) (156150 ms)
+//     ✓ stack-stx (reward-phase), stack-extend (reward-phase) (401007 ms)
+//     ✓ stack-stx (reward-phase), stack-extend (prepare-phase) (308613 ms)
+//     ✕ stack-stx (reward-phase), stack-increase (reward-phase) (309899 ms)
+//     ✓ stack-stx (reward-phase), stack-increase (prepare-phase) (292046 ms)
+//     ✓ pool: delegate-stack, agg-increase (prepare-phase) (61738 ms)
+//     ✓ pool: agg increase over maxAmount (68536 ms)
+//     ✓ pool: delegate with invalid hashbyte length (200336 ms)
+//     ✓ Pool delegate can only delegate-stack-stx for the next cycle (40894 ms)
+//     ✓ Cannot stack if delegating (39574 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx if already stacking (44710 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (41472 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool (40864 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx for the current cycle (37921 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx to an un-delegated entity (34515 ms)
+//     ✓ Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle (66307 ms)
+//     ✓ Pool can pre-approve a signature for participants (49776 ms)
+//     ✓ Stacker switches signers for stack-increase (41325 ms)
+//     ✓ Stacker switches signers for stack-extend (42526 ms)
+//     ✓ Call readonly with weird string (38611 ms)
+//     ✓ Pool stacker can delegate-stx, Pool stacker cannot submit an invalid pox-addr-version (38901 ms)
+//     ✓ Pool stacker cannot delegate to two pool operators at once (48660 ms)
+//     ✓ Revoke fails if stacker is not currently delegated (37214 ms)
+//     ✓ Pool delegate can successfully provide a stacking lock for a pool stacker (delegate-stack-stx) (151942 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker (42282 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx for the current cycle (44362 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (43610 ms)
+//     ✓ Pool delegate cannot change the pox-addr provided by delegator (39571 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx if the delegation expires before the next cycle ends (45491 ms)
+//     ✓ Pool delegate-stack-stx fails if the delegator has insufficient balance (39176 ms)
+//     ✓ Pool delegate cannot delegate-stack 0 stx, Pool delegate cannot delegate-stack-stx for 0 cycles, Pool delegate cannot delegate-stack-stx for > 12 cycles (46677 ms)
+//     ✓ Pool delegate cannot submit an invalid pox-addr-ver (40326 ms)
+//     ✓ Pool stacker can revoke delegate status (revoke-delegate-stx) (46296 ms)
+//     ✓ Pool delegate can successfully delegate-stack-extend (42510 ms)

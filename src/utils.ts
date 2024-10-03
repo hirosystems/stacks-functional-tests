@@ -15,7 +15,27 @@ export function withRetry<T, A extends any[]>(
     let attempts = 0;
     while (true) {
       try {
-        return await fn(...args);
+        const response = await fn(...args);
+
+        if (response instanceof Response && !response.ok) {
+          const clone = response.clone();
+
+          // Don't retry on these errors:
+          if (response.url.includes('/fees/')) {
+            return response as T;
+          }
+
+          console.log(
+            `(retry) status: ${clone.status} (${attempts}/${maxRetries}) ${clone.url}\n${await clone.text().catch(() => '')}`
+          );
+          if (attempts >= maxRetries) throw clone.status;
+
+          await timeout(ENV.RETRY_INTERVAL);
+          attempts++;
+          continue;
+        }
+
+        return response as T;
       } catch (err: any) {
         if (err.status !== 502 && attempts >= maxRetries) throw err; // ignore Bad Gateway errors
         await timeout(ENV.RETRY_INTERVAL);
@@ -43,6 +63,51 @@ export function withTimeout<T, A extends any[]>(
   };
 }
 
+export async function networkEnvUp() {
+  if (!ENV.NETWORK_UP_CMD) return;
+
+  console.log('starting network...');
+  const out = await x(ENV.NETWORK_UP_CMD);
+  // if (out.stderr) throw new Error(out.stderr);
+  return out.stdout;
+}
+
+export async function networkEnvDown() {
+  if (!ENV.NETWORK_DOWN_CMD) return;
+
+  console.log('stopping network...');
+  const out = await x(ENV.NETWORK_DOWN_CMD);
+  // if (out.stderr) throw new Error(out.stderr);
+  return out.stdout;
+}
+
+export async function regtestComposeUp(name?: string, opts?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`starting regtest services... ${name}`);
+  const out = await x(
+    `cd ${ENV.REGTEST_WORKING_DIR} && docker compose ${opts ? opts : ''} up -d ${name}`
+  );
+  return out.stdout;
+}
+
+export async function regtestComposeDown(name?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`stopping regtest services... ${name}`);
+  const out = await x(`cd ${ENV.REGTEST_WORKING_DIR} && docker compose down ${name}`);
+  return out.stdout;
+}
+
+export async function regtestComposeLogs(name?: string) {
+  if (!ENV.REGTEST_WORKING_DIR) return;
+
+  console.log(`stopping regtest services... ${name}`);
+  const out = await x(`cd ${ENV.REGTEST_WORKING_DIR} && docker compose logs ${name}`);
+  return out.stdout;
+}
+
+/** WIP */
 export async function storeEventsTsv(suffix: string = '') {
   let testname = expect.getState().currentTestName ?? '';
   testname = testname
@@ -66,19 +131,5 @@ export async function storeEventsTsv(suffix: string = '') {
       ${filename}`
   );
   if (out.stderr) throw new Error(out.stderr);
-  return out.stdout;
-}
-
-export async function startRegtestEnv() {
-  console.log('starting regtest-env...');
-  const out = await x(ENV.REGTEST_UP_CMD);
-  // if (out.stderr) throw new Error(out.stderr);
-  return out.stdout;
-}
-
-export async function stopRegtestEnv() {
-  console.log('stopping regtest-env...');
-  const out = await x(ENV.REGTEST_DOWN_CMD);
-  // if (out.stderr) throw new Error(out.stderr);
   return out.stdout;
 }
