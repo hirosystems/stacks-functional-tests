@@ -31,7 +31,7 @@ const schema = Type.Object({
       'board list obtain sugar hour worth raven scout denial thunder horse logic fury scorpion fold genuine phrase wealth news aim below celery when cabin',
   }),
 
-  /** Height to wait for after waiting for the network to boot up */
+  /** Height to wait for after waiting for the network to boot up; PoX-4/Epoch2.5 by default */
   WAIT_UNTIL_BURN_HEIGHT: Type.Integer({ default: 108 }),
 
   /**

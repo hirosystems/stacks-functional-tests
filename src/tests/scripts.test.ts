@@ -18,7 +18,7 @@ test('get info', async () => {
 });
 
 test('get account', async () => {
-  const steph = getAccount('7287ba251d44a4d3fd9276c88ce34c5c52a038955511cccaf77e61068649c17801');
+  const steph = getAccount('7036b29cb5e235e5fd9b09ae3e8eec4404e44906814d5d01cbca968a60ed4bfb01');
   console.log(steph);
   const balances = await steph.client.getAccountExtendedBalances();
   console.log(balances);

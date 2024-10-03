@@ -16,17 +16,12 @@ import { c32addressDecode } from 'c32check';
 import * as crypto from 'crypto';
 import { ENV } from '../env';
 import {
-  bitcoindClient,
   broadcastAndWaitForTransaction,
   burnHeightToRewardCycle,
   getAccount,
   getPox4Events,
-  getPubKeyHashFromTx,
   getRewards,
   getStackerSet,
-  getStacksBlock,
-  getStacksBlockHeight,
-  getStacksBlockRaw,
   isInPreparePhase,
   stacksNetwork,
   waitForBurnBlockHeight,
@@ -36,9 +31,9 @@ import {
   waitForRewardPhase,
   waitForTransaction,
 } from '../helpers';
-import { networkEnvDown, networkEnvUp, regtestComposeDown, regtestComposeUp } from '../utils';
+import { networkEnvDown, networkEnvUp } from '../utils';
 
-// jest.retryTimes(3);
+jest.retryTimes(3);
 
 describe('regtest-env pox-4', () => {
   const network = stacksNetwork();
@@ -59,57 +54,9 @@ describe('regtest-env pox-4', () => {
   // - ensure multiple miners
   // - validate signers keys from block headers (w/ Hank)
 
-  const NAKAMOTO_HEIGHT = 132;
-
-  test.skip('wip test', async () => {
-    await waitForBurnBlockHeight(NAKAMOTO_HEIGHT);
-
-    const block = await getStacksBlock();
-    console.log('stx block', block.height, block.hash);
-
-    const blockRaw = await getStacksBlockRaw(block.height);
-    console.log('stx block raw', blockRaw);
-  });
-
-  test.skip('signer rollover', async () => {
-    await waitForBurnBlockHeight(110);
-    console.log(await regtestComposeDown('stacker'));
-    console.log(await regtestComposeUp('stacker', '--env-file .env-signers-5'));
-    // cycle 5 (reward phase)
-    // stacker script should have stacked until 6
-    // shut off stackers (in cycle 5)
-    // original signers can take on cycle 6
-    // power up new stackers (in cycle 6)
-    // new stackers take on cycle 7
-  });
-
-  test.skip('multiple miners are active', async () => {
-    // PREP
-    await waitForBurnBlockHeight(109);
-
-    const height = await getStacksBlockHeight();
-    const range = Array.from({ length: height - 1 }, (_, i) => i + 1);
-    console.log('height', height, 'range', range.length);
-
-    const pubKeyHashes = await Promise.all(
-      range.map(async height => {
-        const block = await getStacksBlock(height);
-        const tx = await bitcoindClient.getrawtransaction({
-          txid: block.miner_txid.replace('0x', ''),
-        });
-        return getPubKeyHashFromTx(tx as string);
-      })
-    );
-
-    expect(range.length).toBeGreaterThan(0);
-    expect(pubKeyHashes.length).toBeGreaterThan(0);
-
-    expect(new Set(pubKeyHashes).size).toBe(2);
-  });
-
   // STACKING
 
-  test.skip('stack-stx (in reward-phase)', async () => {
+  test('stack-stx (in reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // but steph doesn't run a signer, so we need to use a different signer key
@@ -213,7 +160,7 @@ describe('regtest-env pox-4', () => {
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
   });
 
-  test.skip('stack-stx (before prepare-phase)', async () => {
+  test('stack-stx (before prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks on a prepare-phase start (not deep in
     // the prepare phase)
@@ -341,7 +288,7 @@ describe('regtest-env pox-4', () => {
     expect(reward.burn_block_height).toBeGreaterThan(stackHeight);
   });
 
-  test.skip('stack-stx (on prepare-phase start)', async () => {
+  test('stack-stx (on prepare-phase start)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks on a prepare-phase start (not deep in
     // the prepare phase)
@@ -411,7 +358,9 @@ describe('regtest-env pox-4', () => {
     expect(
       isInPreparePhase(poxInfo.current_burnchain_block_height as number, poxInfo)
     ).toBeTruthy();
-    expect(await getStackerSet(nextCycle)).toBeDefined();
+    const set = await getStackerSet(nextCycle);
+    expect(set).toBeDefined();
+    expect(JSON.stringify(set)).not.toContain(c32addressDecode(steph.address)[1]); // stacker is NOT in reward set
 
     await waitForRewardPhase(poxInfo, +1);
     poxInfo = await client.getPoxInfo();
@@ -429,7 +378,7 @@ describe('regtest-env pox-4', () => {
     expect(datas).toContainEqual(
       expect.objectContaining({
         lock_amount: amount.toString(),
-        start_cycle_id: nextCycle.toString(), // TODO: these act correct, but should be different from the blockchain side
+        start_cycle_id: (nextCycle + 1).toString(),
         end_cycle_id: (nextCycle + lockPeriod).toString(),
       })
     );
@@ -458,7 +407,7 @@ describe('regtest-env pox-4', () => {
     expect(reward).toBeUndefined();
   });
 
-  test.skip('stack-stx (in prepare-phase)', async () => {
+  test('stack-stx (in prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and attempts to stack 1 block after the
     // prepare-phase has started, which is considered a neglected prepare-phase
@@ -561,7 +510,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.every(r => r.burn_block_height < stackHeight)).toBeTruthy(); // no new rewards
   });
 
-  test.skip('stack-stx (reward-phase), stack-extend (reward-phase)', async () => {
+  test('stack-stx (reward-phase), stack-extend (reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then extends in a reward-phase
@@ -710,7 +659,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBeGreaterThan(0);
   });
 
-  test.skip('stack-stx (reward-phase), stack-extend (prepare-phase)', async () => {
+  test('stack-stx (reward-phase), stack-extend (prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then attempts to extend in a prepare-phase
@@ -861,7 +810,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > extendHeight).length).toBe(0); // extend didn't make it
   });
 
-  test.skip('stack-stx (reward-phase), stack-increase (reward-phase)', async () => {
+  test('stack-stx (reward-phase), stack-increase (reward-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a reward-phase
@@ -1005,7 +954,7 @@ describe('regtest-env pox-4', () => {
     expect(rewards.filter(r => r.burn_block_height > increaseHeight).length).toBeGreaterThan(0);
   });
 
-  test.skip('stack-stx (reward-phase), stack-increase (prepare-phase)', async () => {
+  test('stack-stx (reward-phase), stack-increase (prepare-phase)', async () => {
     // TEST CASE
     // steph is a solo stacker and stacks in a reward-phase
     // steph then increases in a prepare-phase
@@ -1153,7 +1102,7 @@ describe('regtest-env pox-4', () => {
     // todo: (functional) some how ensure the slots were not increased on the blockchain side
   });
 
-  test.skip('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
+  test('pool: delegate-stack, agg-increase (prepare-phase)', async () => {
     // TEST CASE
     // alice and bob delegate to a pool
     // the pool stacks for alice (in the reward-phase)
@@ -1334,7 +1283,7 @@ describe('regtest-env pox-4', () => {
     expect(rewardSet?.total_ustx).toBe(amount * 2n);
   });
 
-  test.skip('pool: agg increase over maxAmount', async () => {
+  test('pool: agg increase over maxAmount', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (a part of her delegated amount)
@@ -1497,7 +1446,7 @@ describe('regtest-env pox-4', () => {
     expect(rewardSet?.total_ustx).toBe((fullAmount * 2n) / 4n);
   });
 
-  test.skip('pool: delegate with invalid hashbyte length', async () => {
+  test('pool: delegate with invalid hashbyte length', async () => {
     // TEST CASE
     // alice delegates to a pool with an invalid hashbyte length
     // the transaction should fail (but won't)
@@ -1575,7 +1524,7 @@ describe('regtest-env pox-4', () => {
     );
   });
 
-  test.skip('Pool delegate can only delegate-stack-stx for the next cycle', async () => {
+  test('Pool delegate can only delegate-stack-stx for the next cycle', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (in the reward-phase) for a cycle that is not the next cycle
@@ -1626,7 +1575,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Cannot stack if delegating', async () => {
+  test('Cannot stack if delegating', async () => {
     // TEST CASE
     // alice delegates to a pool
     // alice stacks for herself
@@ -1687,7 +1636,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceStackTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx if already stacking', async () => {
+  test('Pool delegate cannot delegate-stack-stx if already stacking', async () => {
     // TEST CASE
     // alice stacks for herself
     // alice delegates to a pool
@@ -1763,7 +1712,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
+  test('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (with a higher amount)
@@ -1813,7 +1762,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool', async () => {
+  test('Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool', async () => {
     // TEST CASE
     // alice delegates to a pool A
     // pool B tries to delegate-stack-stx for alice
@@ -1866,7 +1815,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx for the current cycle', async () => {
+  test('Pool delegate cannot delegate-stack-stx for the current cycle', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (in the reward-phase) for the current cycle
@@ -1917,7 +1866,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx to an un-delegated entity', async () => {
+  test('Pool delegate cannot delegate-stack-stx to an un-delegated entity', async () => {
     // TEST CASE
     // pool delegate stacks for alice (in the reward-phase)
     // the transaction should fail
@@ -1953,7 +1902,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle', async () => {
+  test('Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (in the reward-phase)
@@ -2017,7 +1966,7 @@ describe('regtest-env pox-4', () => {
     expect(await alice.client.getAccountBalanceLocked()).toBe(amount); // also still locked for next cycle
   });
 
-  test.skip('Pool can pre-approve a signature for participants', async () => {
+  test('Pool can pre-approve a signature for participants', async () => {
     // TEST CASE
     // pool can create a signature and push it to pox state
     // alice can't use the signature with an incorrect period
@@ -2132,7 +2081,7 @@ describe('regtest-env pox-4', () => {
     expect(bobStackTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Stacker switches signers for stack-increase', async () => {
+  test('Stacker switches signers for stack-increase', async () => {
     // TEST CASE
     // alice solo stacks with signer A
     // alice increases stack with signer B
@@ -2211,7 +2160,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceIncreaseTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Stacker switches signers for stack-extend', async () => {
+  test('Stacker switches signers for stack-extend', async () => {
     // TEST CASE
     // alice solo stacks with signer A
     // alice extends stack with signer B
@@ -2291,7 +2240,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceIncreaseTx.tx_status).toBe('success');
   });
 
-  test.skip('Call readonly with weird string', async () => {
+  test('Call readonly with weird string', async () => {
     // TEST CASE
     // call a read-only function with a weird string
     // the transaction should fail
@@ -2337,7 +2286,7 @@ describe('regtest-env pox-4', () => {
     expect(poxInfo).toBeDefined();
   });
 
-  test.skip('Pool stacker can delegate-stx, Pool stacker cannot submit an invalid pox-addr-version', async () => {
+  test('Pool stacker can delegate-stx, Pool stacker cannot submit an invalid pox-addr-version', async () => {
     // TEST CASE
     // alice delegates to a pool with an invalid pox-addr-version
     // the transaction should fail
@@ -2382,7 +2331,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceDelegateTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool stacker cannot delegate to two pool operators at once', async () => {
+  test('Pool stacker cannot delegate to two pool operators at once', async () => {
     // TEST CASE
     // alice delegates to a pool
     // alice tries to delegate to another pool
@@ -2428,7 +2377,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceDelegate2Tx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Revoke fails if stacker is not currently delegated', async () => {
+  test('Revoke fails if stacker is not currently delegated', async () => {
     // TEST CASE
     // alice revokes stx from a pool (without having delegated)
     // the transaction should fail
@@ -2456,7 +2405,7 @@ describe('regtest-env pox-4', () => {
     expect(aliceRevokeTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate can successfully provide a stacking lock for a pool stacker (delegate-stack-stx)', async () => {
+  test('Pool delegate can successfully provide a stacking lock for a pool stacker (delegate-stack-stx)', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate stacks for alice (in the reward-phase)
@@ -2546,7 +2495,7 @@ describe('regtest-env pox-4', () => {
     expect(await alice.client.getAccountBalanceLocked()).toBe(0n);
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker', async () => {
+  test('Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker', async () => {
     // TEST CASE
     // alice solo stacks
     // pool delegate tries to delegate-stack for alice
@@ -2605,7 +2554,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx for the current cycle', async () => {
+  test('Pool delegate cannot delegate-stack-stx for the current cycle', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate-stack for alice
@@ -2677,7 +2626,7 @@ describe('regtest-env pox-4', () => {
     expect(poolCommitTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
+  test('Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool delegate-stack for alice
@@ -2736,7 +2685,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAlice2Tx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot change the pox-addr provided by delegator', async () => {
+  test('Pool delegate cannot change the pox-addr provided by delegator', async () => {
     // TEST CASE
     // alice delegates to a pool
     // pool tries to delegate-stack for alice with a different pox-addr
@@ -2782,7 +2731,7 @@ describe('regtest-env pox-4', () => {
     expect(poolAliceTx.tx_status).toBe('abort_by_response');
   });
 
-  test.skip('Pool delegate cannot delegate-stack-stx if the delegation expires before the next cycle ends', async () => {
+  test('Pool delegate cannot delegate-stack-stx if the delegation expires before the next cycle ends', async () => {
     // TEST CASE
     // alice delegates to a pool (until before the next cycle ends)
     // pool tries to delegate-stack for alice
@@ -3130,3 +3079,41 @@ describe('regtest-env pox-4', () => {
     expect(await alice.client.getAccountBalanceLocked()).toBe(amount);
   });
 });
+
+//     ✓ stack-stx (in reward-phase) (203603 ms)
+//     ✕ stack-stx (before prepare-phase) (52573 ms)
+//     ✕ stack-stx (on prepare-phase start) (68493 ms)
+//     ✓ stack-stx (in prepare-phase) (156150 ms)
+//     ✓ stack-stx (reward-phase), stack-extend (reward-phase) (401007 ms)
+//     ✓ stack-stx (reward-phase), stack-extend (prepare-phase) (308613 ms)
+//     ✕ stack-stx (reward-phase), stack-increase (reward-phase) (309899 ms)
+//     ✓ stack-stx (reward-phase), stack-increase (prepare-phase) (292046 ms)
+//     ✓ pool: delegate-stack, agg-increase (prepare-phase) (61738 ms)
+//     ✓ pool: agg increase over maxAmount (68536 ms)
+//     ✓ pool: delegate with invalid hashbyte length (200336 ms)
+//     ✓ Pool delegate can only delegate-stack-stx for the next cycle (40894 ms)
+//     ✓ Cannot stack if delegating (39574 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx if already stacking (44710 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (41472 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx on behalf of a delegator that delegated to another pool (40864 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx for the current cycle (37921 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx to an un-delegated entity (34515 ms)
+//     ✓ Pool stacker, if actively stacked, cannot revoke delegate status for the current reward cycle (66307 ms)
+//     ✓ Pool can pre-approve a signature for participants (49776 ms)
+//     ✓ Stacker switches signers for stack-increase (41325 ms)
+//     ✓ Stacker switches signers for stack-extend (42526 ms)
+//     ✓ Call readonly with weird string (38611 ms)
+//     ✓ Pool stacker can delegate-stx, Pool stacker cannot submit an invalid pox-addr-version (38901 ms)
+//     ✓ Pool stacker cannot delegate to two pool operators at once (48660 ms)
+//     ✓ Revoke fails if stacker is not currently delegated (37214 ms)
+//     ✓ Pool delegate can successfully provide a stacking lock for a pool stacker (delegate-stack-stx) (151942 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx to an un-delegated solo stacker (42282 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx for the current cycle (44362 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx more STX than what delegator has explicitly allowed (43610 ms)
+//     ✓ Pool delegate cannot change the pox-addr provided by delegator (39571 ms)
+//     ✓ Pool delegate cannot delegate-stack-stx if the delegation expires before the next cycle ends (45491 ms)
+//     ✓ Pool delegate-stack-stx fails if the delegator has insufficient balance (39176 ms)
+//     ✓ Pool delegate cannot delegate-stack 0 stx, Pool delegate cannot delegate-stack-stx for 0 cycles, Pool delegate cannot delegate-stack-stx for > 12 cycles (46677 ms)
+//     ✓ Pool delegate cannot submit an invalid pox-addr-ver (40326 ms)
+//     ✓ Pool stacker can revoke delegate status (revoke-delegate-stx) (46296 ms)
+//     ✓ Pool delegate can successfully delegate-stack-extend (42510 ms)
