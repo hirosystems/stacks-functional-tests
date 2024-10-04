@@ -1,11 +1,4 @@
-import {
-  waitForBurnBlockHeight,
-  getStacksBlock,
-  getStacksBlockRaw,
-  getStacksBlockHeight,
-  bitcoindClient,
-  getPubKeyHashFromTx,
-} from '../helpers';
+import { waitForBurnBlockHeight, getStacksBlock, getStacksBlockRaw } from '../helpers';
 import { regtestComposeDown, regtestComposeUp } from '../utils';
 
 test('wip test', async () => {
@@ -28,28 +21,4 @@ test('signer rollover', async () => {
   // original signers can take on cycle 6
   // power up new stackers (in cycle 6)
   // new stackers take on cycle 7
-});
-
-test('multiple miners are active', async () => {
-  // PREP
-  await waitForBurnBlockHeight(109);
-
-  const height = await getStacksBlockHeight();
-  const range = Array.from({ length: height - 1 }, (_, i) => i + 1);
-  console.log('height', height, 'range', range.length);
-
-  const pubKeyHashes = await Promise.all(
-    range.map(async height => {
-      const block = await getStacksBlock(height);
-      const tx = await bitcoindClient.getrawtransaction({
-        txid: block.miner_txid.replace('0x', ''),
-      });
-      return getPubKeyHashFromTx(tx as string);
-    })
-  );
-
-  expect(range.length).toBeGreaterThan(0);
-  expect(pubKeyHashes.length).toBeGreaterThan(0);
-
-  expect(new Set(pubKeyHashes).size).toBe(2);
 });

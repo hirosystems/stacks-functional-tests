@@ -509,6 +509,7 @@ export async function resumeProxy(name: ProxyName) {
 
 // BITCOIND RPC ================================================================
 export const bitcoindClient = new RpcClient('http://btc:btc@localhost:18443').Typed;
+// =============================================================================
 
 export function getPubKeyHashFromTx(tx: string) {
   const transaction = btc.Transaction.fromRaw(hexToBytes(tx), {
@@ -519,4 +520,3 @@ export function getPubKeyHashFromTx(tx: string) {
   const decodedScript = btc.Script.decode(input.finalScriptSig);
   return bytesToHex(decodedScript[1] as Uint8Array);
 }
-// =============================================================================
