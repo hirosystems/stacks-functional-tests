@@ -1,0 +1,21 @@
+{
+  "name": "profiling-transactions",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "format": "prettier --write ."
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "prettier": "@stacks/prettier-config",
+  "dependencies": {
+    "@stacks/network": "^6.13.0",
+    "@stacks/transactions": "^6.13.0",
+    "@stacks/wallet-sdk": "^6.13.0",
+    "dotenv": "^16.4.5",
+    "env-schema": "^5.2.1"
+  }
+}
