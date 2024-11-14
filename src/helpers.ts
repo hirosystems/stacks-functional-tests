@@ -35,6 +35,7 @@ import { Wallet, generateNewAccount, generateWallet } from '@stacks/wallet-sdk';
 import { Toxiproxy } from 'toxiproxy-node-client';
 import { ENV } from './env';
 import { withRetry, withTimeout } from './utils';
+import { c32addressDecode } from 'c32check';
 
 export function newSocketClient(): StacksApiSocketClient {
   return new StacksApiSocketClient({
@@ -218,6 +219,7 @@ export async function getStackerSet(cycle: number) {
   ).stacker_set;
 }
 
+/** Uses the clarity map entries of the pox contract to get the reward set of a cycle */
 export async function getTentativeStackerSet(cycle: number, poxInfo: PoxInfo) {
   const [contractAddress, contractName] = poxInfo.contract_id.split('.');
   const lenTuple = (await getContractMapEntry({
@@ -317,6 +319,7 @@ export function getAccount(key: string) {
       network.isMainnet() ? NETWORK : TEST_NETWORK
     ) as string,
     client: new StackingClient(address, network),
+    hashBytes: c32addressDecode(address)[1],
   };
 }
 
@@ -509,6 +512,7 @@ export async function resumeProxy(name: ProxyName) {
 
 // BITCOIND RPC ================================================================
 export const bitcoindClient = new RpcClient('http://btc:btc@localhost:18443').Typed;
+// =============================================================================
 
 export function getPubKeyHashFromTx(tx: string) {
   const transaction = btc.Transaction.fromRaw(hexToBytes(tx), {
@@ -519,4 +523,3 @@ export function getPubKeyHashFromTx(tx: string) {
   const decodedScript = btc.Script.decode(input.finalScriptSig);
   return bytesToHex(decodedScript[1] as Uint8Array);
 }
-// =============================================================================
