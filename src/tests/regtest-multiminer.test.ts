@@ -26,7 +26,7 @@ test('multiple miners are active', async () => {
   // get the pubkey hashes from the stacks blocks
   // ensure there are EXACTLY TWO unique pubkeys mining
 
-  await waitForBurnBlockHeight(130);
+  await waitForBurnBlockHeight(300);
 
   const height = await getStacksBlockHeight();
   const range = Array.from({ length: height - 1 }, (_, i) => i + 1);
